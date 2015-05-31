@@ -92,6 +92,10 @@ namespace MonoDevelop.Ide
 				InstrumentationService.StartAutoSave (logFile, 1000);
 			}
 
+			Counters.Initialization.Trace ("Checking for MSBuild 14 tools.");
+			if (Platform.IsWindows && !CheckWindowsMSBuild14 ())
+				return 1;
+
 			Counters.Initialization.Trace ("Initializing GTK");
 			if (Platform.IsWindows && !CheckWindowsGtk ())
 				return 1;
@@ -355,6 +359,28 @@ namespace MonoDevelop.Ide
 		[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
 		[return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
 		static extern bool SetDllDirectory (string lpPathName);
+
+		static bool CheckWindowsMSBuild14 ()
+		{
+			// Check for MSBuild 14 being installed.
+			// HACK: This is done using a check for an MSBuild 14 entry, not a .NET framework one.
+			using (var lmKey = Microsoft.Win32.RegistryKey.OpenBaseKey (Microsoft.Win32.RegistryHive.LocalMachine, Environment.Is64BitProcess ? Microsoft.Win32.RegistryView.Registry64 : Microsoft.Win32.RegistryView.Registry32)) {
+				if (lmKey != null)
+					using (var msBuildKey = lmKey.OpenSubKey (@"SOFTWARE\Microsoft\MSBuild\14.0\"))
+						if (msBuildKey != null)
+							return true;
+			}
+
+			LoggingService.LogError ("Did not find required MSBuild14 tools installation.");
+			const string url = "https://microsoft.com/en-us/download/details.aspx?id=46882";
+			const string caption = "Fatal Error";
+			const string message = "{0} did not find MSBuild14 Tools installed. Please click OK to open the download page, where " +
+				"you can download and install from.";
+			if (DisplayWindowsOkCancelMessage (string.Format (message, BrandingService.ApplicationName, url), caption)) {
+				Process.Start (url);
+			}
+			return false;
+		}
 
 		static bool CheckWindowsGtk ()
 		{
