@@ -105,16 +105,19 @@ namespace MonoDevelop.Ide.TypeSystem
 					return NoOpPersistentStorageInstance;
 
 				// get working folder path
-				var workingFolderPath = TypeSystemService.GetCacheDirectory (solution.FilePath, true);
-				if (workingFolderPath == null)
-				{
-					// we don't have place to save. don't use caching
-					return NoOpPersistentStorageInstance;
+				string workingFolderPath;
+				lock (getStorageLock) {
+					workingFolderPath = TypeSystemService.GetCacheDirectory (solution.FilePath, true);
+					if (workingFolderPath == null) {
+						// we don't have place to save. don't use caching
+						return NoOpPersistentStorageInstance;
+					}
 				}
 
 				return GetStorage(solution, workingFolderPath);
 			}
 
+			object getStorageLock = new object ();
 			object storageLock = new object ();
 
 			IPersistentStorage GetStorage (Solution solution, string workingFolderPath)
@@ -161,7 +164,6 @@ namespace MonoDevelop.Ide.TypeSystem
 				var result = new StringBuilder();
 				foreach (var b in md5.ComputeHash (Encoding.ASCII.GetBytes (data))) {
 					result.Append(b.ToString("X2"));
-
 				}
 				return result.ToString();
 			}
@@ -198,6 +200,7 @@ namespace MonoDevelop.Ide.TypeSystem
 					return defaultStreamTask;
 				return Task.FromResult ((Stream)File.OpenRead (fileName));
 			}
+
 			public Task<Stream> ReadStreamAsync(string name, CancellationToken cancellationToken = default(CancellationToken))
 			{
 				string fileName = Path.Combine (workingFolderPath, GetFileName (name));
@@ -210,7 +213,7 @@ namespace MonoDevelop.Ide.TypeSystem
 			{
 				string fileName = Path.Combine (workingFolderPath, GetDocumentDataFileName (document, name));
 				using (var newStream = File.OpenWrite (fileName)) {
-					await stream.CopyToAsync (newStream);
+					await stream.CopyToAsync (newStream, 81920, cancellationToken);
 				}
 				return true;
 			}
@@ -219,7 +222,7 @@ namespace MonoDevelop.Ide.TypeSystem
 			{
 				string fileName = Path.Combine (workingFolderPath, GetProjectDataFileName (project, name));
 				using (var newStream = File.OpenWrite (fileName)) {
-					await stream.CopyToAsync (newStream);
+					await stream.CopyToAsync (newStream, 81920, cancellationToken);
 				}
 				return true;
 			}
@@ -228,7 +231,7 @@ namespace MonoDevelop.Ide.TypeSystem
 			{
 				string fileName = Path.Combine (workingFolderPath, GetFileName (name));
 				using (var newStream = File.OpenWrite (fileName)) {
-					await stream.CopyToAsync (newStream);
+					await stream.CopyToAsync (newStream, 81920, cancellationToken);
 				}
 				return true;
 			}
