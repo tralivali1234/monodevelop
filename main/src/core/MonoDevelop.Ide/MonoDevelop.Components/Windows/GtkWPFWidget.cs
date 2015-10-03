@@ -30,6 +30,8 @@ using System.Windows;
 using System.Windows.Interop;
 using Gtk;
 using Gdk;
+using System.Threading;
+using System.Runtime.InteropServices;
 
 namespace MonoDevelop.Components.Windows
 {
@@ -101,7 +103,7 @@ namespace MonoDevelop.Components.Windows
 
 			wpfWindow.Close ();
 		}
-
+		
 		protected override void OnShown ()
 		{
 			base.OnShown ();
