@@ -353,10 +353,5 @@ namespace MonoDevelop.Ide
 		{
 			PlatformService.PlaceWindow (window, x, y, width, height);
 		}
-
-		internal static bool RequiresCustomResizeBorders ()
-		{
-			return PlatformService.RequiresCustomResizeBorders ();
-		}
 	}
 }
