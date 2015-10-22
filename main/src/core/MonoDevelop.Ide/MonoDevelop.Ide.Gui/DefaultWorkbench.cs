@@ -615,7 +615,7 @@ namespace MonoDevelop.Ide.Gui
 				}
 				if (Platform.IsWindows) {
 					Decorated = false;
-					GdkWindow.SetDecorations (Gdk.WMDecoration.Border);
+					GdkWindow.SetDecorations (Gdk.WMDecoration.Resizeh | Gdk.WMDecoration.Border);
 				} else {
 					Decorated = true;
 				}
