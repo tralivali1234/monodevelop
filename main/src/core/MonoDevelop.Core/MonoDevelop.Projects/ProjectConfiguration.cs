@@ -101,7 +101,7 @@ namespace MonoDevelop.Projects
 			if (debugType != "none" || !debugTypeWasNone)
 				pset.SetValue ("DebugSymbols", debugMode, false);
 			
-			pset.SetValue ("OutputPath", outputDirectory);
+			pset.SetValue ("OutputPath", outputDirectory, defaultValue:new FilePath ("." + Path.DirectorySeparatorChar));
 			pset.SetValue ("ConsolePause", pauseConsoleOutput, true);
 			pset.SetValue ("ExternalConsole", externalConsole, false);
 			pset.SetValue ("Commandlineparameters", commandLineParameters, "");

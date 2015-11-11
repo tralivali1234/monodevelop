@@ -890,6 +890,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 			if (ob.ParentObject == this) {
 				ob.RemoveIndent ();
 				ChildNodes = ChildNodes.Remove (ob);
+				ob.ParentNode = null;
 			}
 		}
 
@@ -900,7 +901,7 @@ namespace MonoDevelop.Projects.Formats.MSBuild
 				item.RemoveIndent ();
 				var g = item.ParentGroup;
 				g.RemoveItem (item);
-				if (!item.ParentGroup.Items.Any ())
+				if (!g.Items.Any ())
 					Remove (g);
 			}
 		}
