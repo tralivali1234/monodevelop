@@ -17,7 +17,7 @@ DEP[0]=md-addins
 DEP_NAME[0]=MDADDINS
 DEP_PATH[0]=${top_srcdir}/../md-addins
 DEP_MODULE[0]=git@github.com:xamarin/md-addins.git
-DEP_NEEDED_VERSION[0]=c70dfe0fcbcbe0c35a511ac3f468af3d1d1eb45b
+DEP_NEEDED_VERSION[0]=a0582cafac8237d2d431918e824f3ca88c5149b5
 DEP_BRANCH_AND_REMOTE[0]="cycle6-ipad-pro-images origin/cycle6-ipad-pro-images"
 
 # heap-shot
