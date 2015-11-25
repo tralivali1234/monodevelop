@@ -45,6 +45,8 @@ namespace WindowsPlatform
 		public static Brush MenuSelectedBackgroundBrush { get; private set; }
 		public static Brush MenuSelectedBorderBrush { get; private set; }
 		public static Brush MenuDisabledForegroundBrush { get; private set; }
+		public static Brush MenuDisabledBackgroundBrush { get; private set; }
+		public static Brush MenuDisabledBorderBrush { get; private set; }
 		public static Brush MenuSeparatorBrush { get; private set; }
 
 		public static Brush StatusBarBackgroundBrush { get; private set; }
@@ -75,6 +77,8 @@ namespace WindowsPlatform
 			MenuSelectedBackgroundBrush = new SolidColorBrush (new Color { A = 0x66, R = 0x00, G = 0x8B, B = 0xFF });
 			MenuSelectedBorderBrush = new SolidColorBrush (new Color { A = 0x66, R = 0x00, G = 0x8B, B = 0xFF });
 			MenuDisabledForegroundBrush = new SolidColorBrush (new Color { A = 0xFF, R = 0x70, G = 0x70, B = 0x70 });
+			MenuDisabledBackgroundBrush = new SolidColorBrush (new Color { A = 0x0F, R = 0x00, G = 0x00, B = 0x00 });
+			MenuDisabledBorderBrush = new SolidColorBrush (new Color { A = 0x0F, R = 0x00, G = 0x00, B = 0x00 });
 
 			StatusBarBackgroundBrush = new SolidColorBrush (new Color { A = 0xFF, R = 0xE5, G = 0xE5, B = 0xE5 });
 			StatusBarTextBrush = MainToolbarForegroundBrush;

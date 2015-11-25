@@ -73,6 +73,14 @@
 	                <Setter TargetName="OpaqueRect"  Property="Canvas.Top"  Value="{Binding ElementName=SubMenuScrollViewer, Path=VerticalOffset}" />
 	                <Setter TargetName="OpaqueRect" Property="Canvas.Left" Value="{Binding ElementName=SubMenuScrollViewer, Path=HorizontalOffset}" />
 	            </Trigger>
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsEnabled" Value="False" />
+                        <Condition Property="IsHighlighted" Value="True" />
+                    </MultiTrigger.Conditions>
+                    <Setter TargetName="templateRoot" Property="Background" Value="{Binding Path=(platform:Styles.MenuDisabledBackgroundBrush), Mode=OneWay}" />
+                    <Setter TargetName="templateRoot" Property="BorderBrush" Value="{Binding Path=(platform:Styles.MenuDisabledBorderBrush), Mode=OneWay}" />
+                </MultiTrigger>
 	        </ControlTemplate.Triggers>
 	    </ControlTemplate>
 	    <ControlTemplate x:Key="{ComponentResourceKey TypeInTargetAssembly={x:Type local:SimpleMenuItem}, ResourceId=SimpleItemTemplateKey}" TargetType="{x:Type local:SimpleMenuItem}">
@@ -105,6 +113,14 @@
 	            <Trigger Property="IsEnabled" Value="False">
 	                <Setter TargetName="templateRoot" Property="TextElement.Foreground" Value="{Binding Path=(platform:Styles.MenuDisabledForegroundBrush), Mode=OneWay}" />
 	            </Trigger>        
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsEnabled" Value="False" />
+                        <Condition Property="IsHighlighted" Value="True" />
+                    </MultiTrigger.Conditions>
+                    <Setter TargetName="templateRoot" Property="Background" Value="{Binding Path=(platform:Styles.MenuDisabledBackgroundBrush), Mode=OneWay}" />
+                    <Setter TargetName="templateRoot" Property="BorderBrush" Value="{Binding Path=(platform:Styles.MenuDisabledBorderBrush), Mode=OneWay}" />
+                </MultiTrigger>
 	        </ControlTemplate.Triggers>
 	    </ControlTemplate>
 
@@ -186,6 +202,14 @@
 	                <Setter TargetName="OpaqueRect" Property="Canvas.Top" Value="{Binding ElementName=SubMenuScrollViewer, Path=VerticalOffset}" />
 	                <Setter TargetName="OpaqueRect" Property="Canvas.Left" Value="{Binding ElementName=SubMenuScrollViewer, Path=HorizontalOffset}" />
 	            </Trigger>
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsEnabled" Value="False" />
+                        <Condition Property="IsHighlighted" Value="True" />
+                    </MultiTrigger.Conditions>
+                    <Setter TargetName="templateRoot" Property="Background" Value="{Binding Path=(platform:Styles.MenuDisabledBackgroundBrush), Mode=OneWay}" />
+                    <Setter TargetName="templateRoot" Property="BorderBrush" Value="{Binding Path=(platform:Styles.MenuDisabledBorderBrush), Mode=OneWay}" />
+                </MultiTrigger>
 	        </ControlTemplate.Triggers>
 	    </ControlTemplate>
     </MenuItem.Resources>
