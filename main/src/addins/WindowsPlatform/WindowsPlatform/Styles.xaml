@@ -395,7 +395,7 @@
             <MultiTrigger>
                 <MultiTrigger.Conditions>
                     <Condition Property="IsEnabled" Value="False" />
-                    <Condition Property="IsHighlighted" Value="False" />
+                    <Condition Property="IsHighlighted" Value="True" />
                 </MultiTrigger.Conditions>
                 <Setter TargetName="templateRoot" Property="Background" Value="{Binding Path=(platform:Styles.MenuDisabledBackgroundBrush), Mode=OneWay}" />
                 <Setter TargetName="templateRoot" Property="BorderBrush" Value="{Binding Path=(platform:Styles.MenuDisabledBorderBrush), Mode=OneWay}" />
