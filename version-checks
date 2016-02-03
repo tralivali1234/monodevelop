@@ -17,7 +17,7 @@ DEP[0]=md-addins
 DEP_NAME[0]=MDADDINS
 DEP_PATH[0]=${top_srcdir}/../md-addins
 DEP_MODULE[0]=git@github.com:xamarin/md-addins.git
-DEP_NEEDED_VERSION[0]=187f52d8bbc0952ba18838268c8ec153931214a6
+DEP_NEEDED_VERSION[0]=2d840b1de5d7161a18abed40e5a06fd79a7684d3
 DEP_BRANCH_AND_REMOTE[0]="device-hang-fix origin/device-hang-fix"
 
 # heap-shot
