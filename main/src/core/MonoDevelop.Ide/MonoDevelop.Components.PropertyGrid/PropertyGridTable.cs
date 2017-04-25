@@ -127,6 +127,16 @@ namespace MonoDevelop.Components.PropertyGrid
 			}
 		}
 
+		Gdk.Cursor cursor;
+		Gdk.Cursor Cursor {
+			get { return cursor; }
+			set {
+				if (cursor == value)
+					return;
+				GdkWindow.Cursor = cursor = value;
+			}
+		}
+
 		public PropertyGridTable (EditorManager editorManager, PropertyGrid parentGrid)
 		{
 			GtkWorkarounds.FixContainerLeak (this);
@@ -182,7 +192,10 @@ namespace MonoDevelop.Components.PropertyGrid
 			//make a best attempt using reference equality to match objects and the name to match their properties.
 			expandedStatus = new Dictionary<object,List<string>>(new ReferenceEqualityComparer<object> ());
 
-			foreach (var r in rows.Where (r => r.IsExpandable)) {
+			foreach (var r in rows) {
+				if (!r.IsExpandable)
+					continue;
+				
 				object key;
 				string val;
 				bool mark;
@@ -625,7 +638,7 @@ namespace MonoDevelop.Components.PropertyGrid
 			return GetAllRows (rows, onlyVisible);
 		}
 
-		IEnumerable<TableRow> GetAllRows (IEnumerable<TableRow> rows, bool onlyVisible)
+		IEnumerable<TableRow> GetAllRows (List<TableRow> rows, bool onlyVisible)
 		{
 			foreach (var r in rows) {
 				yield return r;
@@ -644,7 +657,7 @@ namespace MonoDevelop.Components.PropertyGrid
 			int dx = (int)((double)Allocation.Width * dividerPosition);
 			if (Math.Abs (dx - evnt.X) < 4) {
 				draggingDivider = true;
-				GdkWindow.Cursor = resizeCursor;
+				Cursor = resizeCursor;
 				return true;
 			}
 
@@ -699,18 +712,18 @@ namespace MonoDevelop.Components.PropertyGrid
 			if (row != null && row.IsExpandable) {
 				var bounds = GetInactiveEditorBounds (row);
 				if (bounds.IsEmpty || !bounds.Contains ((int)evnt.X, (int)evnt.Y)) {
-					GdkWindow.Cursor = handCursor;
+					Cursor = handCursor;
 					return true;
 				}
 			}
 
 			int dx = (int)((double)Allocation.Width * dividerPosition);
 			if (Math.Abs (dx - evnt.X) < 4) {
-				GdkWindow.Cursor = resizeCursor;
+				Cursor = resizeCursor;
 				return true;
 			}
 			ShowTooltip (evnt);
-			GdkWindow.Cursor = null;
+			Cursor = null;
 			return base.OnMotionNotifyEvent (evnt);
 		}
 
@@ -733,6 +746,7 @@ namespace MonoDevelop.Components.PropertyGrid
 				tooltipTimeout = 0;
 			}
 			if (tooltipWindow != null) {
+				tooltipWindow.Hide ();
 				tooltipWindow.Destroy ();
 				tooltipWindow = null;
 			}
@@ -745,8 +759,10 @@ namespace MonoDevelop.Components.PropertyGrid
 				return;
 			var row = GetAllRows (true).FirstOrDefault (r => !r.IsCategory && y >= r.EditorBounds.Y && y <= r.EditorBounds.Bottom);
 			if (row != null) {
-				tooltipWindow = new TooltipPopoverWindow ();
-				tooltipWindow.ShowArrow = true;
+				if (tooltipWindow == null) {
+						tooltipWindow = TooltipPopoverWindow.Create ();
+						tooltipWindow.ShowArrow = true;
+				}
 				var s = new System.Text.StringBuilder ("<b>" + row.Property.DisplayName + "</b>");
 				s.AppendLine ();
 				s.AppendLine ();
@@ -758,7 +774,7 @@ namespace MonoDevelop.Components.PropertyGrid
 						var multiLineValue = string.Join (Environment.NewLine, Enumerable.Range (0, (int)Math.Ceiling ((double)value.Length / chunkLength)).Select (n => string.Concat (value.Skip (n * chunkLength).Take (chunkLength))));
 						s.AppendLine ();
 						s.AppendLine ();
-						s.Append ("Value: " + multiLineValue);
+						s.Append ("Value: ").Append (multiLineValue);
 					}
 				}
 				tooltipWindow.Markup = s.ToString ();
@@ -831,7 +847,7 @@ namespace MonoDevelop.Components.PropertyGrid
 		protected override void OnDragLeave (DragContext context, uint time_)
 		{
 			if (!draggingDivider)
-				GdkWindow.Cursor = null;
+				Cursor = null;
 			base.OnDragLeave (context, time_);
 		}
 

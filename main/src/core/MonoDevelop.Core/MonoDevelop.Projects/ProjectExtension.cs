@@ -60,6 +60,16 @@ namespace MonoDevelop.Projects
 			return next.SupportsFlavor (guid);
 		}
 
+		internal bool IsMicrosoftBuildRequired {
+			get {
+				return RequiresMicrosoftBuild || (next != null && next.IsMicrosoftBuildRequired);
+			}
+		}
+
+		protected bool RequiresMicrosoftBuild {
+			get; set;
+		}
+
 		internal protected virtual ProjectRunConfiguration OnCreateRunConfiguration (string name)
 		{
 			return next.OnCreateRunConfiguration (name);
@@ -140,9 +150,19 @@ namespace MonoDevelop.Projects
 			next.OnWriteConfiguration (monitor, config, pset);
 		}
 
+		internal protected virtual Task OnReevaluateProject (ProgressMonitor monitor)
+		{
+			return next.OnReevaluateProject (monitor);
+		}
+
 		internal protected virtual Task<ProjectFile []> OnGetSourceFiles (ProgressMonitor monitor, ConfigurationSelector configuration)
 		{
 			return next.OnGetSourceFiles (monitor, configuration);
+		}
+
+		internal protected virtual bool OnGetSupportsImportedItem (IMSBuildItemEvaluated buildItem)
+		{
+			return next.OnGetSupportsImportedItem (buildItem);
 		}
 
 		#region Building

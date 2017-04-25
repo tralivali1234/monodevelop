@@ -178,9 +178,10 @@ namespace MonoDevelop.Components
 
 		public static Xwt.Size GetSize (this IconSize size)
 		{
+			var displayScale = Platform.IsWindows ? GtkWorkarounds.GetScaleFactor () : 1.0;
 			int w, h;
 			size.GetSize (out w, out h);
-			return new Xwt.Size (w, h);
+			return new Xwt.Size ((double)w / displayScale, (double)h / displayScale);
 		}
 
 		public static void GetSize (this IconSize size, out int width, out int height)
@@ -228,6 +229,15 @@ namespace MonoDevelop.Components
 			screenPoint.X = (int)Math.Abs (macgeometry.X - screenPoint.X);
 			screenPoint.X += geometry.X;
 			return screenPoint;
+		}
+
+		public static Gdk.Rectangle GetSceenBounds (this AppKit.NSView widget)
+		{
+			var frame = widget.Frame;
+			var point = ConvertToGdkCoordinates (widget.Window?.Screen, new Gdk.Point ((int)frame.Location.X, (int)frame.Location.Y));
+			frame.X = point.X;
+			frame.Y = point.Y;
+			return new Gdk.Rectangle ((int)frame.X, (int)frame.Y, (int)frame.Width, (int)frame.Height);
 		}
 		#endif
 
@@ -775,6 +785,32 @@ namespace MonoDevelop.Components
 
 				entry.ShowNativeContextMenu (args.Event);
 				args.RetVal = true;
+			}
+		}
+
+		/// <summary>
+		/// Shows the context menu for a TreeView.
+		/// </summary>
+		/// <returns><c>true</c>, if context menu was shown, <c>false</c> otherwise.</returns>
+		/// <param name="tree">Gtk TreeView for which the context menu is shown</param>
+		/// <param name="evt">The current mouse event, or <c>null</c>.</param>
+		/// <param name="entrySet">Entry set with the command definitions</param>
+		/// <param name="initialCommandTarget">Initial command target.</param>
+		public static bool ShowContextMenu (this Gtk.TreeView tree, Gdk.EventButton evt, Commands.CommandEntrySet entrySet,
+			object initialCommandTarget = null)
+		{
+			if (evt == null) {
+				var paths = tree.Selection.GetSelectedRows ();
+				if (paths != null) {
+					var area = tree.GetCellArea (paths [0], tree.Columns [0]);
+					return Ide.IdeApp.CommandService.ShowContextMenu (tree, area.Left, area.Top, entrySet, initialCommandTarget);
+				} else
+					return Ide.IdeApp.CommandService.ShowContextMenu (tree, 0, 0, entrySet, initialCommandTarget);
+			} else {
+				int x = (int)evt.X, y = (int)evt.Y;
+				if (Platform.IsMac && tree.BinWindow == evt.Window)
+					tree.ConvertBinWindowToWidgetCoords (x, y, out x, out y);
+				return Ide.IdeApp.CommandService.ShowContextMenu (tree, x, y, entrySet, initialCommandTarget);
 			}
 		}
 	}

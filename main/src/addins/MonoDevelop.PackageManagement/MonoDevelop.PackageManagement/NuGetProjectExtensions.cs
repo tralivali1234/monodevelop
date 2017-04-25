@@ -28,9 +28,10 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MonoDevelop.Core;
+using NuGet.Configuration;
 using NuGet.PackageManagement;
+using NuGet.Packaging.Core;
 using NuGet.ProjectManagement;
-using NuGet.ProjectManagement.Projects;
 
 namespace MonoDevelop.PackageManagement
 {
@@ -38,10 +39,8 @@ namespace MonoDevelop.PackageManagement
 	{
 		public static FilePath GetPackagesFolderPath (this NuGetProject project, IMonoDevelopSolutionManager solutionManager)
 		{
-			if (project is BuildIntegratedProjectSystem) {
-				string globalPackagesPath = BuildIntegratedProjectUtility.GetEffectiveGlobalPackagesFolder (
-					solutionManager.SolutionDirectory,
-					solutionManager.Settings);
+			if (project is ProjectJsonBuildIntegratedProjectSystem ) {
+				string globalPackagesPath = SettingsUtility.GetGlobalPackagesFolder (solutionManager.Settings);
 
 				return new FilePath (globalPackagesPath).FullPath;
 			}

@@ -42,7 +42,7 @@ using System.Linq;
 
 namespace MonoDevelop.Projects.MSBuild
 {
-	public partial class ProjectBuilder: MarshalByRefObject, IProjectBuilder
+	partial class ProjectBuilder: MarshalByRefObject
 	{
 		readonly string file;
 		readonly MDConsoleLogger consoleLogger;
@@ -50,6 +50,9 @@ namespace MonoDevelop.Projects.MSBuild
 
 		public ProjectBuilder (BuildEngine buildEngine, string file)
 		{
+			if (file == null) {
+				throw new ArgumentNullException ("file");
+			}
 			this.file = file;
 			this.buildEngine = buildEngine;
 			consoleLogger = new MDConsoleLogger (LoggerVerbosity.Normal, LogWriteLine, null, null);
@@ -59,7 +62,7 @@ namespace MonoDevelop.Projects.MSBuild
 		FieldInfo evaluatedMetadataField = typeof(BuildItem).GetField ("evaluatedMetadata", BindingFlags.NonPublic | BindingFlags.Instance);
 
 		public MSBuildResult Run (
-			ProjectConfigurationInfo[] configurations, ILogWriter logWriter, MSBuildVerbosity verbosity,
+			ProjectConfigurationInfo[] configurations, IEngineLogWriter logWriter, MSBuildVerbosity verbosity,
 			string[] runTargets, string[] evaluateItems, string[] evaluateProperties, Dictionary<string,string> globalProperties, int taskId)
 		{
 			MSBuildResult result = null;
@@ -75,6 +78,7 @@ namespace MonoDevelop.Projects.MSBuild
 					if (logWriter != null) {
 						buildEngine.Engine.RegisterLogger (consoleLogger);
 						consoleLogger.Verbosity = GetVerbosity (verbosity);
+						buildEngine.Engine.RegisterLogger (new TargetLogger (logWriter.RequiredEvents, LogEvent));
 					}
 
 					if (runTargets != null && runTargets.Length > 0) {
@@ -113,7 +117,7 @@ namespace MonoDevelop.Projects.MSBuild
 								}
 								list.Add (evItem);
 							}
-							result.Items[name] = list;
+							result.Items[name] = list.ToArray ();
 						}
 					}
 				} catch (InvalidProjectFileException ex) {

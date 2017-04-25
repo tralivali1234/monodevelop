@@ -108,6 +108,11 @@ namespace MonoDevelop.Ide
 				ActiveConfigurationChanged (this, EventArgs.Empty);
 		}
 
+		public ExecutionTarget GetActiveExecutionTarget (SolutionItem project)
+		{
+			return (activeExecutionTarget as MultiProjectExecutionTarget)?.GetTarget (project) ?? activeExecutionTarget;
+		}
+
 		ExecutionTarget activeExecutionTarget;
 		public ExecutionTarget ActiveExecutionTarget {
 			get { return activeExecutionTarget; }
@@ -349,17 +354,17 @@ namespace MonoDevelop.Ide
 				SavePreferences (it);
 		}
 		
-		public bool Close ()
+		public async Task<bool> Close ()
 		{
-			return Close (true);
+			return await Close (true);
 		}
 
-		public bool Close (bool saveWorkspacePreferencies)
+		public async Task<bool> Close (bool saveWorkspacePreferencies)
 		{
-			return Close (saveWorkspacePreferencies, true);
+			return await Close (saveWorkspacePreferencies, true);
 		}
 		
-		internal bool Close (bool saveWorkspacePreferencies, bool closeProjectFiles)
+		internal async Task<bool> Close (bool saveWorkspacePreferencies, bool closeProjectFiles)
 		{
 			if (Items.Count > 0) {
 				ITimeTracker timer = Counters.CloseWorkspaceTimer.BeginTiming ();
@@ -375,7 +380,7 @@ namespace MonoDevelop.Ide
 
 					if (closeProjectFiles) {
 						foreach (Document doc in IdeApp.Workbench.Documents.ToArray ()) {
-							if (!doc.Close ())
+							if (!await doc.Close ())
 								return false;
 						}
 					}
@@ -395,14 +400,14 @@ namespace MonoDevelop.Ide
 			return true;
 		}
 		
-		public void CloseWorkspaceItem (WorkspaceItem item, bool closeItemFiles = true)
+		public async Task CloseWorkspaceItem (WorkspaceItem item, bool closeItemFiles = true)
 		{
 			if (!Items.Contains (item))
 				throw new InvalidOperationException ("Only top level items can be closed.");
 
 			if (Items.Count == 1 && closeItemFiles) {
 				// There is only one item, close the whole workspace
-				Close (true, closeItemFiles);
+				await Close (true, closeItemFiles);
 				return;
 			}
 
@@ -410,7 +415,7 @@ namespace MonoDevelop.Ide
 				if (closeItemFiles) {
 					var projects = item.GetAllItems<Project> ();
 					foreach (Document doc in IdeApp.Workbench.Documents.Where (d => d.Project != null && projects.Contains (d.Project)).ToArray ()) {
-						if (!doc.Close ())
+						if (!await doc.Close ())
 							return;
 					}
 				}
@@ -464,7 +469,7 @@ namespace MonoDevelop.Ide
 			}
 
 			if (closeCurrent) {
-				if (!Close ())
+				if (!await Close ())
 					return false;
 			}
 
@@ -567,10 +572,6 @@ namespace MonoDevelop.Ide
 					timer.Trace ("Restoring workspace preferences");
 					await RestoreWorkspacePreferences (item);
 				}
-				timer.Trace ("Reattaching documents");
-				ReattachDocumentProjects (null);
-				monitor.ReportSuccess (GettextCatalog.GetString ("Solution loaded."));
-
 				timer.Trace ("Reattaching documents");
 				ReattachDocumentProjects (null);
 				monitor.ReportSuccess (GettextCatalog.GetString ("Solution loaded."));
@@ -714,14 +715,16 @@ namespace MonoDevelop.Ide
 		async Task OnCheckWorkspaceItem (WorkspaceItem item)
 		{
 			if (item.NeedsReload) {
-				IEnumerable<string> closedDocs;
-				if (AllowReload (item.GetAllItems<Project> (), out closedDocs)) {
+				var result = await AllowReload (item.GetAllItems<Project> ());
+				bool allowReload = result.Item1;
+				IEnumerable<string> closedDocs = result.Item2;
+				if (result.Item1) {
 					if (item.ParentWorkspace == null) {
 						string file = item.FileName;
 						try {
 							SetReloading (true);
 							SavePreferences ();
-							CloseWorkspaceItem (item, false);
+							await CloseWorkspaceItem (item, false);
 							await OpenWorkspaceItem (file, false, false);
 						} finally {
 							SetReloading (false);
@@ -730,7 +733,8 @@ namespace MonoDevelop.Ide
 					else {
 						using (ProgressMonitor m = IdeApp.Workbench.ProgressMonitors.GetSaveProgressMonitor (true)) {
 							await item.ParentWorkspace.ReloadItem (m, item);
-							ReattachDocumentProjects (closedDocs);
+							if (closedDocs != null)
+								ReattachDocumentProjects (closedDocs);
 						}
 					}
 
@@ -760,14 +764,17 @@ namespace MonoDevelop.Ide
 				} else if (entry is SolutionFolder) {
 					projects = ((SolutionFolder)entry).GetAllProjects ();
 				}
+
+				var result = await AllowReload (projects);
+				bool allowReload = result.Item1;
+				IEnumerable<string> closedDocs = result.Item2;
 				
-				IEnumerable<string> closedDocs;
-				
-				if (AllowReload (projects, out closedDocs)) {
+				if (allowReload) {
 					using (ProgressMonitor m = IdeApp.Workbench.ProgressMonitors.GetProjectLoadProgressMonitor (true)) {
 						// Root folders never need to reload
 						await entry.ParentFolder.ReloadItem (m, entry);
-						ReattachDocumentProjects (closedDocs);
+						if (closedDocs != null)
+							ReattachDocumentProjects (closedDocs);
 					}
 					return;
 				} else
@@ -789,12 +796,12 @@ namespace MonoDevelop.Ide
 //			return AllowReload (projects, out closedDocs);
 //		}
 		
-		bool AllowReload (IEnumerable projects, out IEnumerable<string> closedDocs)
+		async Task<Tuple<bool, IEnumerable<string>>> AllowReload (IEnumerable projects)
 		{
-			closedDocs = null;
+			IEnumerable<string> closedDocs = null;
 			
 			if (projects == null)
-				return true;
+				return Tuple.Create (true, closedDocs);
 			
 			List<Document> docs = new List<Document> ();
 			foreach (Project p in projects) {
@@ -802,7 +809,7 @@ namespace MonoDevelop.Ide
 			}
 			
 			if (docs.Count == 0)
-				return true;
+				return Tuple.Create (true, closedDocs);
 			
 			// Find a common project reload capability
 			
@@ -839,7 +846,7 @@ namespace MonoDevelop.Ide
 			}
 			if (msg != null) {
 				if (!MessageService.Confirm (GettextCatalog.GetString ("The project '{0}' has been modified by an external application. Do you want to reload it?", docs[0].Project.Name), msg, AlertButton.Reload))
-					return false;
+					return Tuple.Create (true, closedDocs);
 			}
 			
 			List<string> closed = new List<string> ();
@@ -857,8 +864,8 @@ namespace MonoDevelop.Ide
 					};
 					doc.Saved += saved;
 					try {
-						if (!doc.Close ())
-							return false;
+						if (!await doc.Close ())
+							return Tuple.Create (true, closedDocs);
 						else if (!file.IsNullOrEmpty && File.Exists (file))
 							closed.Add (file);
 					} finally {
@@ -868,7 +875,7 @@ namespace MonoDevelop.Ide
 			}
 			closedDocs = closed;
 
-			return true;
+			return Tuple.Create (true, closedDocs);
 		}
 		
 		internal static List<Document> GetOpenDocuments (Project project, bool modifiedOnly)

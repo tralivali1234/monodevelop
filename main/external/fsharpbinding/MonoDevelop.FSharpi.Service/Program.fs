@@ -1,9 +1,11 @@
 ﻿namespace MonoDevelop.FSharpInteractive
 open System
+open System.Diagnostics
+open System.Drawing
 open System.IO
+open System.Reflection
 open Newtonsoft.Json
 open Microsoft.FSharp.Compiler.Interactive.Shell
-
 open MonoDevelop.FSharp.Shared
 /// Wrapper for fsi with support for returning completions
 module CompletionServer =
@@ -13,17 +15,19 @@ module CompletionServer =
         let outStream = Console.Out
         let server = "MonoDevelop" + Guid.NewGuid().ToString("n")
 
+        let editorPid = if argv.Length > 0 then Some (Int32.Parse argv.[0]) else None
         // This flag makes fsi send the SERVER-PROMPT> prompt
         // once it's output the header
-        let args = "--fsi-server:" + server + " "
-        let argv = [| "--readline-"; args  |]
+        let fsiServerArg = sprintf "--fsi-server:%s " server
+        // Make System.ValueTuple available to FSI
+        let executingFolder = Assembly.GetExecutingAssembly().Location |> Path.GetDirectoryName
+        let valueTuplePath = Path.Combine(executingFolder, "System.ValueTuple.dll")
+        let valueTupleArg = sprintf "-r:%s" valueTuplePath
+        let argv = [| "--readline-"; fsiServerArg; valueTupleArg |]
 
         let serializer = JsonSerializer.Create()
 
-        let fsiConfig = FsiEvaluationSession.GetDefaultConfiguration(Microsoft.FSharp.Compiler.Interactive.Settings.fsi, true)
 
-        let fsiSession = FsiEvaluationSession.Create(fsiConfig, argv, inStream, outStream, outStream, true)
-       
         let (|Input|_|) (command: string) =
             if command.StartsWith("input ") then
                 Some(command.[6..])
@@ -79,7 +83,31 @@ module CompletionServer =
                 do! Console.Error.WriteLineAsync (commandType + " " + json) |> Async.AwaitTask
             }
 
+        let renderImage (image:Image) =
+            use ms = new MemoryStream()
+            image.Save(ms, image.RawFormat)
+            let imageBytes = ms.ToArray()
+            let base64String = Convert.ToBase64String imageBytes
+            // Want this to be synchronous so that it renders
+            // before the output text
+            printfn "image %s" base64String
+            image.Size |> box
+
+        let fsi = Microsoft.FSharp.Compiler.Interactive.Settings.fsi
+        fsi.AddPrintTransformer renderImage
+        let fsiConfig = FsiEvaluationSession.GetDefaultConfiguration(fsi, true)
+
+        let fsiSession = FsiEvaluationSession.Create(fsiConfig, argv, inStream, outStream, outStream, true)
+
+        // Add a watch on the editor PID. If it goes away we will self terminate.
+        let editorProcess = editorPid |> Option.bind(fun pid -> Some (Process.GetProcessById pid))
+
         let rec main(currentInput) =
+            editorProcess 
+            |> Option.iter(fun editor ->
+                if editor.HasExited then 
+                    Process.GetCurrentProcess().Kill())
+
             let parseInput() =
                 async {
                     let! command = inStream.ReadLineAsync() |> Async.AwaitTask

@@ -39,6 +39,8 @@ namespace MonoDevelop.Ide.Gui
 	{
 		public static event EventHandler Changed;
 
+		public static Theme CurrentStyle { get { return IdeTheme.UserInterfaceTheme; } }
+
 		public static Color BackgroundColor { get; internal set; }        // must be the bg color from Gtkrc
 		public static Color BaseBackgroundColor { get; internal set; }    // must be the base color from Gtkrc
 		public static Color BaseForegroundColor { get; internal set; }    // must be the text color from Gtkrc
@@ -75,6 +77,7 @@ namespace MonoDevelop.Ide.Gui
 		public static Color SecondaryBackgroundLighterColor { get; internal set; }
 		public static Color SecondaryBackgroundDarkerColor { get; internal set; }
 		public static Color DimTextColor { get; internal set; }
+		public static string DimTextColorHexString { get; internal set; }
 		public static Color StatusInformationBackgroundColor { get; internal set; }
 		public static Color StatusInformationTextColor { get; internal set; }
 		public static Color StatusWarningBackgroundColor { get; internal set; }
@@ -178,6 +181,7 @@ namespace MonoDevelop.Ide.Gui
 			public static Color InformationTextColor { get; internal set; }
 
 			public static Color ShadowColor { get; internal set; }
+			public static Color BorderColor { get; internal set; }
 
 			public static class ParamaterWindows
 			{
@@ -444,7 +448,8 @@ namespace MonoDevelop.Ide.Gui
 			PrimaryBackgroundColor = BaseBackgroundColor;
 			SecondaryBackgroundDarkerColor = Color.FromName ("#e7eaee");
 			SecondaryBackgroundLighterColor = Color.FromName ("#f9f9fb");
-			DimTextColor = Color.FromName ("#888888");
+			DimTextColorHexString = "#888888";
+			DimTextColor = Color.FromName (DimTextColorHexString);
 			PadBackground = Color.FromName ("#fafafa");
 			InactivePadBackground = Color.FromName ("#e8e8e8");
 			InactivePadLabelColor = Color.FromName ("#777777");
@@ -518,6 +523,7 @@ namespace MonoDevelop.Ide.Gui
 			PopoverWindow.DefaultBackgroundColor = Color.FromName ("#f2f2f2"); // gtkrc @tooltip_bg_color
 			PopoverWindow.DefaultTextColor = Color.FromName ("#555555");
 			PopoverWindow.ShadowColor = Color.FromName ("#000000").WithAlpha (.05);
+			PopoverWindow.BorderColor = Colors.Transparent; // disable border drawing
 
 			PopoverWindow.ParamaterWindows.GradientStartColor = Color.FromName ("#fffee6");
 			PopoverWindow.ParamaterWindows.GradientEndColor = Color.FromName ("#fffcd1");
@@ -561,7 +567,8 @@ namespace MonoDevelop.Ide.Gui
 			PrimaryBackgroundColor = BaseBackgroundColor;
 			SecondaryBackgroundDarkerColor = Color.FromName ("#484848");
 			SecondaryBackgroundLighterColor = SeparatorColor;
-			DimTextColor = Color.FromName ("#777777");
+			DimTextColorHexString = "#777777";
+			DimTextColor = Color.FromName (DimTextColorHexString);
 			PadBackground = Color.FromName ("#525252");
 			InactivePadBackground = Color.FromName ("#474747");
 			InactivePadLabelColor = Color.FromName ("#999999");
@@ -633,6 +640,7 @@ namespace MonoDevelop.Ide.Gui
 			PopoverWindow.DefaultBackgroundColor = Color.FromName ("#5e5e5e");
 			PopoverWindow.DefaultTextColor = Color.FromName ("#bdc1c1");
 			PopoverWindow.ShadowColor = Color.FromName ("#000000").WithAlpha (0); // transparent since dark theme doesn't need shadows
+			PopoverWindow.BorderColor = Colors.Transparent; // disable border drawing
 
 			PopoverWindow.ParamaterWindows.GradientStartColor = Color.FromName ("#fffee6");
 			PopoverWindow.ParamaterWindows.GradientEndColor = Color.FromName ("#fffcd1");

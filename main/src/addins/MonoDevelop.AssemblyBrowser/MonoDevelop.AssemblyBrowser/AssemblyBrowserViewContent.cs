@@ -76,7 +76,11 @@ namespace MonoDevelop.AssemblyBrowser
 		{
 			ContentName = GettextCatalog.GetString ("Assembly Browser");
 			var loader = widget.AddReferenceByFileName (fileOpenInformation.FileName);
-			widget.SelectAssembly (loader.UnresolvedAssembly.AssemblyName);
+			if (loader == null)
+				return Task.FromResult (true);
+			loader.LoadingTask.ContinueWith (delegate {
+				widget.SelectAssembly (loader);
+			});
 			return Task.FromResult (true);
 		}
 

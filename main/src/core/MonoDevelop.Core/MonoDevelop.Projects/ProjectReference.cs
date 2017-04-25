@@ -96,6 +96,8 @@ namespace MonoDevelop.Projects
 				package = value;
 			}
 		}
+
+		public string ProjectGuid { get => projectGuid; }
 		
 		public ProjectReference ()
 		{
@@ -211,7 +213,7 @@ namespace MonoDevelop.Projects
 			}
 
 			this.referenceType = referenceType;
-			this.reference = reference;
+			this.reference = reference.Trim ();
 			this.hintPath = hintPath;
 			this.projectGuid = projectGuid;
 			UpdatePackageReference ();
@@ -442,9 +444,19 @@ namespace MonoDevelop.Projects
 				return true;
 			}
 		}
+		string aliases = "";
 
-		[ItemProperty ("Aliases", DefaultValue="")]
-		public string Aliases { get; set; }
+		[ItemProperty ("Aliases", DefaultValue = "")]
+		public string Aliases {
+			get {
+				return aliases;
+			}
+			set {
+				aliases = value;
+				if (ownerProject != null)
+					ownerProject.NotifyModified ("References");
+			}
+		}
 
 		public bool IsValid {
 			get { return string.IsNullOrEmpty (ValidationErrorMessage); }

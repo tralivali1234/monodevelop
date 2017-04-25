@@ -1,4 +1,4 @@
-// ProjectTests.cs
+﻿// ProjectTests.cs
 //
 // Author:
 //   Lluis Sanchez Gual <lluis@novell.com>
@@ -35,6 +35,7 @@ using System.Xml;
 using System.Threading.Tasks;
 using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Projects.Policies;
+using MonoDevelop.Ide.CustomTools;
 
 namespace MonoDevelop.Projects
 {
@@ -64,6 +65,8 @@ namespace MonoDevelop.Projects
 			
 			file = project.Files.GetFile (Util.Combine (dir, "aaa", "..", "bbb", "test2.cs"));
 			Assert.AreEqual (file2, file);
+
+			project.Dispose ();
 		}
 		
 		[Test()]
@@ -87,6 +90,8 @@ namespace MonoDevelop.Projects
 
 			// msbuild doesn't delete this directory
 			// Assert.IsFalse (Directory.Exists (Path.GetDirectoryName (spath)), "Satellite assembly directory not removed");
+
+			sol.Dispose ();
 		}
 		
 		public static void CheckResourcesSolution (Solution sol)
@@ -188,6 +193,8 @@ namespace MonoDevelop.Projects
 			
 			Assert.AreEqual ("Some.Test", ((DotNetProjectConfiguration) p.Configurations [0]).OutputAssembly);
 			Assert.AreEqual ("Some.Test", ((DotNetProjectConfiguration) p.Configurations [1]).OutputAssembly);
+
+			p.Dispose ();
 		}
 		
 		[Test()]
@@ -197,6 +204,7 @@ namespace MonoDevelop.Projects
 			p.Name = "HiThere";
 			DotNetProjectConfiguration c = (DotNetProjectConfiguration) p.CreateConfiguration ("First");
 			Assert.AreEqual ("HiThere", c.OutputAssembly);
+			p.Dispose ();
 		}
 		
 		[Test()]
@@ -221,6 +229,7 @@ namespace MonoDevelop.Projects
 			
 			cmd.WorkingDir = NormalizePath ("/some/${ProjectName}/place");
 			Assert.AreEqual (Path.GetFullPath (NormalizePath ("/some/SomeProject/place")), (string)cmd.GetCommandWorkingDir (p, c.Selector));
+			p.Dispose ();
 		}
 		
 		[Test()]
@@ -283,6 +292,7 @@ namespace MonoDevelop.Projects
 			Assert.AreEqual (file5, file4.DependsOnFile);
 			Assert.AreEqual (1, file5.DependentChildren.Count);
 			Assert.IsTrue (file5.DependentChildren.Contains (file4));
+			sol.Dispose ();
 		}
 
 		public static string NormalizePath (string path)
@@ -437,6 +447,8 @@ namespace MonoDevelop.Projects
 			Assert.AreEqual (r.ReferenceType, ReferenceType.Assembly);
 			Assert.AreEqual (r.GetReferencedFileNames(project.DefaultConfiguration.Selector).Single (), project.BaseDirectory.Combine ("gtk-sharp.dll").FullPath.ToString ());
 			Assert.IsTrue (r.IsValid);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -477,6 +489,8 @@ namespace MonoDevelop.Projects
 			Assert.AreEqual (r.ReferenceType, ReferenceType.Assembly);
 			Assert.AreEqual (r.GetReferencedFileNames(project.DefaultConfiguration.Selector).Single (), project.BaseDirectory.Combine ("test.dll").FullPath.ToString ());
 			Assert.IsTrue (r.IsValid);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -507,6 +521,8 @@ namespace MonoDevelop.Projects
 
 			var pl = (DotNetProject)p;
 			Assert.AreEqual (".NETPortable", pl.GetDefaultTargetFrameworkId ().Identifier);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -516,6 +532,7 @@ namespace MonoDevelop.Projects
 			Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
 			var res = await sol.Build (Util.GetMonitor (), "Debug");
 			Assert.IsNull (res.Errors.FirstOrDefault ()?.ToString ());
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -525,6 +542,7 @@ namespace MonoDevelop.Projects
 			Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
 			var p = (DotNetProject) sol.FindProjectByName ("PortableLibrary");
 			var refs = (await p.GetReferencedAssemblies (p.Configurations [0].Selector)).Select (r => r.FilePath.FileName).ToArray ();
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -538,6 +556,7 @@ namespace MonoDevelop.Projects
 			var p = (GenericProject) Services.ProjectService.CreateProject ("GenericProject", info, projectOptions);
 			Assert.AreEqual ("Default", p.Configurations [0].Name);
 			Assert.AreEqual (MSBuildSupport.NotSupported, p.MSBuildEngineSupport);
+			p.Dispose ();
 		}
 
 		[Test]
@@ -547,6 +566,21 @@ namespace MonoDevelop.Projects
 
 			Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
 			var p = sol.FindProjectByName ("GenericProject");
+
+			Assert.IsInstanceOf<GenericProject> (p);
+
+			var pl = (GenericProject)p;
+			Assert.AreEqual ("Default", pl.Configurations [0].Name);
+			sol.Dispose ();
+		}
+
+		[Test]
+		public async Task LoadGenericProjectWithImportBeforePropertyGroup ()
+		{
+			string solFile = Util.GetSampleProject ("generic-project-with-import", "generic-project.sln");
+
+			Solution sol = (Solution)await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			var p = sol.Items[0];
 
 			Assert.IsInstanceOf<GenericProject> (p);
 
@@ -568,10 +602,12 @@ namespace MonoDevelop.Projects
 
 			DotNetProject project = (DotNetProject) Services.ProjectService.CreateProject ("C#", info, projectOptions);
 			Assert.AreEqual ("abc", project.DefaultNamespace);
+			project.Dispose ();
 
 			info.ProjectName = "a.";
 			project = (DotNetProject) Services.ProjectService.CreateProject ("C#", info, projectOptions);
 			Assert.AreEqual ("a", project.DefaultNamespace);
+			project.Dispose ();
 		}
 
 		[Test]
@@ -588,6 +624,7 @@ namespace MonoDevelop.Projects
 			var refs = (await p.GetReferencedAssemblies (ConfigurationSelector.Default)).ToArray ();
 
 			Assert.IsTrue (refs.Any (r => r.FilePath.FileName == "System.Xml.Linq.dll"));
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -609,6 +646,8 @@ namespace MonoDevelop.Projects
 
 			// Check that the in-memory project data is used when the builder is loaded for the first time.
 			Assert.IsTrue (refs.Any (r => r.FilePath.FileName == "System.Xml.Linq.dll"));
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -618,6 +657,7 @@ namespace MonoDevelop.Projects
 			Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
 			var p = (DotNetProject) sol.Items [0];
 			Assert.AreEqual (MSBuildSupport.Supported, p.MSBuildEngineSupport);
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -636,6 +676,7 @@ namespace MonoDevelop.Projects
 				await op1;
 				await op2;
 				Assert.AreEqual (2, SerializedSaveTestExtension.SaveCount);
+				sol.Dispose ();
 			} finally {
 				WorkspaceObject.UnregisterCustomExtension (node);
 			}
@@ -659,6 +700,8 @@ namespace MonoDevelop.Projects
 			var p2 = (DotNetProject) await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), p.FileName);
 			f = p2.GetProjectFile (f.FilePath);
 			Assert.AreEqual ("ConsoleProject.foo.SomeFile.txt", f.ResourceId);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -679,6 +722,8 @@ namespace MonoDevelop.Projects
 			var p2 = (DotNetProject) await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), p.FileName);
 			f = p2.GetProjectFile (f.FilePath);
 			Assert.AreEqual ("SomeFile.txt", f.ResourceId);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -692,6 +737,8 @@ namespace MonoDevelop.Projects
 
 			var pol = p.Policies.Get<DotNetNamingPolicy> ();
 			Assert.AreEqual (ResourceNamePolicy.FileName, pol.ResourceNamePolicy);
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -714,6 +761,8 @@ namespace MonoDevelop.Projects
 			var savedXml = File.ReadAllText (p.FileName);
 
 			Assert.AreEqual (refXml, savedXml);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -743,6 +792,8 @@ namespace MonoDevelop.Projects
 			savedXml = File.ReadAllText (p.FileName);
 
 			Assert.AreEqual (refXml, savedXml);
+
+			sol.Dispose ();
 		}
 
 		[Test()]
@@ -757,6 +808,8 @@ namespace MonoDevelop.Projects
 
 			var res = await sol.Build (Util.GetMonitor (), "Debug");
 			Assert.AreEqual (0, res.ErrorCount);
+
+			sol.Dispose ();
 		}
 
 		[Test ()]
@@ -775,6 +828,8 @@ namespace MonoDevelop.Projects
 
 			res = await p.Build (Util.GetMonitor (), (SolutionConfigurationSelector)"Debug", true);
 			Assert.AreEqual (0, res.ErrorCount);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -784,6 +839,7 @@ namespace MonoDevelop.Projects
 			Solution sol = (Solution)await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
 			var fsharpLibrary = sol.Items.FirstOrDefault (pr => pr.Name == "fslib") as DotNetProject;
 			Assert.IsTrue (TypeSystemService.IsOutputTrackedProject (fsharpLibrary));
+			sol.Dispose ();
 		}
 
 		[Test()]
@@ -799,6 +855,8 @@ namespace MonoDevelop.Projects
 
 			var res = await p.Build (Util.GetMonitor (), (SolutionConfigurationSelector) "Debug", true);
 			Assert.AreEqual (1, res.ErrorCount);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -817,6 +875,8 @@ namespace MonoDevelop.Projects
 
 			Assert.AreEqual ("foo", sol.UserProperties.GetValue<string> ("SolProp"));
 			Assert.AreEqual ("bar", p.UserProperties.GetValue<string> ("ProjectProp"));
+
+			sol.Dispose ();
 		}
 
 		/// <summary>
@@ -854,6 +914,8 @@ namespace MonoDevelop.Projects
 
 			Assert.AreEqual (1, p.References.Count);
 			Assert.AreEqual ("System.Xml", p.References[0].Include);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -875,6 +937,8 @@ namespace MonoDevelop.Projects
 			var savedXml = File.ReadAllText (p.FileName);
 
 			Assert.That (savedXml, Contains.Substring ("<Import Project=\"MyImport.targets\""));
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -949,6 +1013,133 @@ namespace MonoDevelop.Projects
 			Assert.AreEqual (1, modifiedRefs);
 			Assert.AreEqual (1, modifiedItems);
 			Assert.AreEqual (1, refsChanged);
+
+			sol.Dispose ();
+		}
+
+		[Test]
+		public void LoadReferenceWithSpaces_bug43510 ()
+		{
+			var pref = ProjectReference.CreateAssemblyReference (" gtk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f");
+			var p = (DotNetProject) Services.ProjectService.CreateProject ("C#");
+			p.References.Add (pref);
+			Assert.IsTrue (pref.IsValid);
+			p.Dispose ();
+		}
+
+		[Test]
+		public async Task FastBuildCheckWithLibrary ()
+		{
+			string solFile = Util.GetSampleProject ("fast-build-test", "FastBuildTest.sln");
+			Solution sol = (Solution)await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			var app = (DotNetProject)sol.Items [0];
+			var lib = (DotNetProject)sol.Items [1];
+
+			var cs = new SolutionConfigurationSelector ("Debug");
+
+			Assert.IsTrue (app.FastCheckNeedsBuild (cs));
+			Assert.IsTrue (lib.FastCheckNeedsBuild (cs));
+
+			var res = await sol.Build (Util.GetMonitor (), cs);
+			Assert.IsFalse (res.HasErrors);
+			Assert.IsFalse (app.FastCheckNeedsBuild (cs));
+			Assert.IsFalse (lib.FastCheckNeedsBuild (cs));
+
+			var myClass = sol.ItemDirectory.Combine ("MyClass.cs");
+			File.WriteAllText (myClass, "public class MyClass { public const string Message = \"Bye\" ; }");
+			FileService.NotifyFileChanged (myClass);
+
+			Assert.IsTrue (app.FastCheckNeedsBuild (cs));
+			Assert.IsTrue (lib.FastCheckNeedsBuild (cs));
+
+			res = await lib.Build (Util.GetMonitor (), cs);
+			Assert.IsFalse (res.HasErrors);
+			Assert.IsFalse (lib.FastCheckNeedsBuild (cs));
+			Assert.IsTrue (app.FastCheckNeedsBuild (cs));
+
+			res = await app.Build (Util.GetMonitor (), cs);
+			Assert.IsFalse (res.HasErrors);
+			Assert.IsFalse (lib.FastCheckNeedsBuild (cs));
+			Assert.IsFalse (app.FastCheckNeedsBuild (cs));
+
+			sol.Dispose ();
+		}
+
+		[Test]
+		public async Task WriteAndReadEnvironmentVariableProperty ()
+		{
+			string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
+			var sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+
+			var p = (DotNetProject) sol.Items [0];
+			var config = (ProjectConfiguration)p.Configurations ["Debug"];
+			config.EnvironmentVariables.Add ("Test1", "Test1Value");
+
+			await p.SaveAsync (Util.GetMonitor ());
+
+			sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			p = (DotNetProject) sol.Items [0];
+			config = (ProjectConfiguration)p.Configurations ["Debug"];
+
+			var doc = new XmlDocument ();
+			doc.Load (p.FileName);
+			var propertyGroup = doc.DocumentElement.ChildNodes [1];
+			var environmentVariablesProperty = propertyGroup.ChildNodes.OfType<XmlElement> ().Last ();
+			var environmentVariablesChildProperty = environmentVariablesProperty.ChildNodes.OfType<XmlElement> ().First ();
+			var variableProperty = environmentVariablesChildProperty.ChildNodes.OfType<XmlElement> ().First ();
+
+			Assert.AreEqual ("Test1Value", config.EnvironmentVariables ["Test1"]);
+			Assert.AreEqual ("EnvironmentVariables", environmentVariablesProperty.Name);
+			Assert.IsFalse (environmentVariablesProperty.HasAttribute ("xmlns"));
+			Assert.IsFalse (environmentVariablesChildProperty.HasAttribute ("xmlns"));
+			Assert.IsFalse (variableProperty.HasAttribute ("xmlns"));
+
+			sol.Dispose ();
+		}
+
+		[Test]
+		public async Task WriteAndReadEnvironmentVariablePropertyForSdkProject ()
+		{
+			string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
+			var sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			var p = (DotNetProject) sol.Items [0];
+
+			string xml =
+				"<Project Sdk=\"Microsoft.NET.Sdk\" ToolsVersion=\"15.0\">\r\n" +
+				"  <PropertyGroup>\r\n" +
+				"    <OutputType>Exe</OutputType>\r\n" +
+				"    <TargetFramework>netcoreapp1.0</TargetFramework>\r\n" +
+				"  </PropertyGroup>\r\n" +
+				"  <PropertyGroup Condition=\" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' \">\r\n" +
+				"    <Value1>true</Value1>\r\n" +
+				"  </PropertyGroup>\r\n" +
+				"</Project>";
+			File.WriteAllText (p.FileName, xml);
+			sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			p = (DotNetProject) sol.Items [0];
+			var config = (ProjectConfiguration)p.Configurations ["Debug"];
+			config.EnvironmentVariables.Add ("Test1", "Test1Value");
+
+			await p.SaveAsync (Util.GetMonitor ());
+
+			sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+			p = (DotNetProject) sol.Items [0];
+			config = (ProjectConfiguration)p.Configurations ["Debug"];
+
+			var doc = new XmlDocument ();
+			doc.Load (p.FileName);
+			var propertyGroup = doc.DocumentElement.ChildNodes [1];
+			var environmentVariablesProperty = (XmlElement)propertyGroup.ChildNodes [1];
+			var environmentVariablesChildProperty = environmentVariablesProperty.ChildNodes.OfType<XmlElement> ().First ();
+			var variableProperty = environmentVariablesChildProperty.ChildNodes.OfType<XmlElement> ().First ();
+
+			Assert.AreEqual ("Test1Value", config.EnvironmentVariables ["Test1"]);
+			Assert.AreEqual ("EnvironmentVariables", environmentVariablesProperty.Name);
+			Assert.IsFalse (environmentVariablesProperty.HasAttribute ("xmlns"));
+			Assert.IsFalse (environmentVariablesChildProperty.HasAttribute ("xmlns"));
+			Assert.IsFalse (variableProperty.HasAttribute ("xmlns"));
+
+			sol.Dispose ();
 		}
 	}
 

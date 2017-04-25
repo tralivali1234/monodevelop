@@ -157,7 +157,8 @@ namespace MonoDevelop.Projects
 			if (projectCreateInfo != null) {
 				Name = projectCreateInfo.ProjectName;
 				binPath = projectCreateInfo.BinPath;
-				defaultNamespace = SanitisePotentialNamespace (projectCreateInfo.ProjectName);
+				string templateDefaultNamespace = GetDefaultNamespace (projectCreateInfo, projectOptions);
+				defaultNamespace = SanitisePotentialNamespace (templateDefaultNamespace ?? projectCreateInfo.ProjectName);
 			} else {
 				binPath = ".";
 			}
@@ -171,6 +172,15 @@ namespace MonoDevelop.Projects
 				if (projectCreateInfo != null)
 					dotNetProjectConfig.OutputAssembly = projectCreateInfo.ProjectName;
 			}
+		}
+
+		static string GetDefaultNamespace (ProjectCreateInformation projectCreateInfo, XmlElement projectOptions)
+		{
+			string defaultNamespace = projectOptions.Attributes["DefaultNamespace"]?.Value;
+			if (defaultNamespace != null)
+				return StringParserService.Parse (defaultNamespace, projectCreateInfo.Parameters);
+
+			return null;
 		}
 
 		void DefineSymbols (DotNetCompilerParameters pars, XmlElement projectOptions, string attributeName)
@@ -603,7 +613,7 @@ namespace MonoDevelop.Projects
 			// Debug info file
 
 			if (conf.DebugSymbols) {
-				string mdbFile = TargetRuntime.GetAssemblyDebugInfoFile (conf.CompiledOutputName);
+				string mdbFile = GetAssemblyDebugInfoFile (conf.Selector, conf.CompiledOutputName);
 				list.Add (mdbFile);
 			}
 
@@ -704,9 +714,12 @@ namespace MonoDevelop.Projects
 						list.Add (file, copyIfNewer);
 						if (File.Exists (file + ".config"))
 							list.Add (file + ".config", copyIfNewer);
-						string mdbFile = TargetRuntime.GetAssemblyDebugInfoFile (file);
-						if (File.Exists (mdbFile))
-							list.Add (mdbFile, copyIfNewer);
+						string debugFile = file + ".mdb";
+						if (File.Exists (debugFile))
+							list.Add (debugFile, copyIfNewer);
+						debugFile = Path.ChangeExtension (file, ".pdb");
+						if (File.Exists (debugFile))
+							list.Add (debugFile, copyIfNewer);
 					}
 				}
 				else {
@@ -774,15 +787,19 @@ namespace MonoDevelop.Projects
 				yield break;
 
 			if (!File.Exists (fileName)) {
-				string ext = Path.GetExtension (fileName).ToLower ();
-				if (ext == ".dll" || ext == ".exe")
+				string ext = Path.GetExtension (fileName);
+				if (string.Equals (ext, ".dll", StringComparison.OrdinalIgnoreCase) || string.Equals (ext, ".exe", StringComparison.OrdinalIgnoreCase))
 					yield break;
-				if (File.Exists (fileName + ".dll"))
-					fileName = fileName + ".dll";
-				else if (File.Exists (fileName + ".exe"))
-					fileName = fileName + ".exe";
-				else
-					yield break;
+				string dllFileName = fileName + ".dll";
+				if (File.Exists (dllFileName))
+					fileName = dllFileName;
+				else {
+					string exeFileName = fileName + ".exe";
+					if (File.Exists (exeFileName))
+						fileName = exeFileName;
+					else
+						yield break;
+				}
 			}
 
 			yield return fileName;
@@ -937,7 +954,7 @@ namespace MonoDevelop.Projects
 					} else {
 						fullPath = Path.GetFullPath (refFilename.FilePath);
 					}
-					if (SystemAssemblyService.ContainsReferenceToSystemRuntime (fullPath)) {
+					if (await SystemAssemblyService.ContainsReferenceToSystemRuntimeAsync (fullPath)) {
 						addFacadeAssemblies = true;
 						break;
 					}
@@ -953,6 +970,34 @@ namespace MonoDevelop.Projects
 					var ar = new AssemblyReference (facade);
 					if (!result.Contains (ar))
 						result.Add (ar);
+				}
+			}
+			return result;
+		}
+
+		public Task<IEnumerable<PackageDependency>> GetPackageDependencies (ConfigurationSelector configuration, CancellationToken cancellationToken)
+		{
+			return BindTask<IEnumerable<PackageDependency>> (async ct => {
+				return await OnGetPackageDependencies (configuration, cancellationToken);
+			});
+		}
+
+		internal protected virtual async Task<List<PackageDependency>> OnGetPackageDependencies (ConfigurationSelector configuration, CancellationToken cancellationToken)
+		{
+			var result = new List<PackageDependency> ();
+			if (CheckUseMSBuildEngine (configuration)) {
+				// Get the references list from the msbuild project
+				RemoteProjectBuilder builder = await GetProjectBuilder ();
+				try {
+					var configs = GetConfigurations (configuration, false);
+
+					PackageDependency [] dependencies;
+					using (Counters.ResolveMSBuildReferencesTimer.BeginTiming (GetProjectEventMetadata (configuration)))
+						dependencies = await builder.ResolvePackageDependencies (configs, cancellationToken);
+					foreach (var d in dependencies)
+						result.Add (d);
+				} finally {
+					builder.ReleaseReference ();
 				}
 			}
 			return result;
@@ -1089,7 +1134,7 @@ namespace MonoDevelop.Projects
 			if (GeneratesDebugInfoFile && conf != null && conf.DebugSymbols) {
 				string file = GetOutputFileName (configuration);
 				if (file != null) {
-					file = TargetRuntime.GetAssemblyDebugInfoFile (file);
+					file = GetAssemblyDebugInfoFile (configuration, file);
 					var finfo = new FileInfo (file);
 					if (finfo.Exists)  {
 						var debugFileBuildTime = finfo.LastWriteTime;
@@ -1099,6 +1144,25 @@ namespace MonoDevelop.Projects
 				}
 			}
 			return outputBuildTime;
+		}
+
+		public FilePath GetAssemblyDebugInfoFile (ConfigurationSelector configuration)
+		{
+			return GetAssemblyDebugInfoFile (configuration, GetOutputFileName (configuration));
+		}
+
+		public FilePath GetAssemblyDebugInfoFile (ConfigurationSelector configuration, FilePath exeFile)
+		{
+			if (CheckUseMSBuildEngine (configuration)) {
+				var mono = TargetRuntime as MonoTargetRuntime;
+				if (mono != null) {
+					var version = mono.MonoRuntimeInfo?.RuntimeVersion;
+					if (version == null || (version < new Version (4, 9, 0)))
+						return exeFile + ".mdb";
+				}
+				return exeFile.ChangeExtension (".pdb");
+			} else
+				return exeFile + ".mdb";
 		}
 
 		public IList<string> GetUserAssemblyPaths (ConfigurationSelector configuration)
@@ -1138,10 +1202,11 @@ namespace MonoDevelop.Projects
 			ExecutionCommand rcmd;
 			var rc = runConfiguration as AssemblyRunConfiguration;
 			if (rc != null && rc.StartAction == AssemblyRunConfiguration.StartActions.Program) {
-				var pcmd = Runtime.ProcessService.CreateCommand (rc.StartProgram);
-				pcmd.Arguments = rc.StartArguments;
-				pcmd.WorkingDirectory = rc.StartWorkingDirectory;
-				pcmd.EnvironmentVariables = rc.EnvironmentVariables;
+				var tagModel = GetStringTagModel (configSel);
+				var pcmd = Runtime.ProcessService.CreateCommand (StringParserService.Parse (rc.StartProgram, tagModel));
+				pcmd.Arguments = StringParserService.Parse (rc.StartArguments, tagModel);
+				pcmd.WorkingDirectory = StringParserService.Parse (rc.StartWorkingDirectory, tagModel);
+				pcmd.EnvironmentVariables = StringParserService.Parse (rc.EnvironmentVariables, tagModel);
 				rcmd = pcmd;
 			} else {
 #pragma warning disable 618 // Type or member is obsolete
@@ -1157,15 +1222,19 @@ namespace MonoDevelop.Projects
 				// Don't directly overwrite the settings, since those may have been set by the OnCreateExecutionCommand
 				// overload that doesn't take a runConfiguration.
 
+				var tagModel = GetStringTagModel (configSel);
+
 				string monoOptions;
-				rc.MonoParameters.GenerateOptions (cmd.EnvironmentVariables, out monoOptions);
+				rc.MonoParameters.GenerateOptions (StringParserService.Parse (cmd.EnvironmentVariables, tagModel), out monoOptions);
 				cmd.RuntimeArguments = monoOptions;
 				if (!string.IsNullOrEmpty (rc.StartArguments))
-					cmd.Arguments = rc.StartArguments;
+					cmd.Arguments = StringParserService.Parse (rc.StartArguments, tagModel);
 				if (!rc.StartWorkingDirectory.IsNullOrEmpty)
-					cmd.WorkingDirectory = rc.StartWorkingDirectory;
-				foreach (var env in rc.EnvironmentVariables)
-					cmd.EnvironmentVariables [env.Key] = env.Value;
+					cmd.WorkingDirectory = StringParserService.Parse (rc.StartWorkingDirectory, tagModel);
+				if (cmd.EnvironmentVariables != rc.EnvironmentVariables) {
+					foreach (var env in rc.EnvironmentVariables)
+						cmd.EnvironmentVariables [env.Key] = StringParserService.Parse (env.Value, tagModel);
+				}
 				cmd.PauseConsoleOutput = rc.PauseConsoleOutput;
 				cmd.ExternalConsole = rc.ExternalConsole;
 				cmd.TargetRuntime = Runtime.SystemAssemblyService.GetTargetRuntime (rc.TargetRuntimeId);
@@ -1642,7 +1711,7 @@ namespace MonoDevelop.Projects
 			}
 
 			var console = externalConsole ? context.ExternalConsoleFactory.CreateConsole (!pauseConsole, monitor.CancellationToken)
-												   : context.ConsoleFactory.CreateConsole (monitor.CancellationToken);
+												   : context.ConsoleFactory.CreateConsole (OperationConsoleFactory.CreateConsoleOptions.Default.WithTitle (Name), monitor.CancellationToken);
 		
 			using (console) {
 				ProcessAsyncOperation asyncOp = context.ExecutionHandler.Execute (executionCommand, console);
@@ -1685,26 +1754,52 @@ namespace MonoDevelop.Projects
 			TargetFramework = Runtime.SystemAssemblyService.GetTargetFramework (targetFx);
 		}
 
-		internal override void ImportDefaultRunConfiguration (ProjectRunConfiguration config)
+		protected override void OnReadProject (ProgressMonitor monitor, MSBuildProject msproject)
 		{
-			base.ImportDefaultRunConfiguration (config);
-			if (config is AssemblyRunConfiguration) {
-				var defaultConf = (DefaultConfiguration ?? Configurations.FirstOrDefault<SolutionItemConfiguration> ()) as DotNetProjectConfiguration;
-				if (defaultConf != null) {
-					var drc = (AssemblyRunConfiguration)config;
-					var cmd = defaultConf.CustomCommands.FirstOrDefault (cc => cc.Type == CustomCommandType.Execute);
-					if (cmd != null) {
-						drc.StartAction = AssemblyRunConfiguration.StartActions.Program;
-						drc.StartProgram = cmd.GetCommandFile (this, defaultConf.Selector);
-						drc.StartArguments = cmd.GetCommandArgs (this, defaultConf.Selector);
-						foreach (var v in cmd.EnvironmentVariables)
-							drc.EnvironmentVariables.Add (v.Key, v.Value);
-						drc.StartWorkingDirectory = cmd.GetCommandWorkingDir (this, defaultConf.Selector);
-						drc.ExternalConsole = cmd.ExternalConsole;
-						drc.PauseConsoleOutput = cmd.PauseExternalConsole;
-						defaultConf.CustomCommands.Remove (cmd);
+			base.OnReadProject (monitor, msproject);
+
+			// Load legacy configurations
+
+			var addedConfigs = new List<CustomCommand> ();
+			int count = 1;
+			foreach (var c in Configurations) {
+				foreach (var cmd in c.CustomCommands.Where (cc => cc.Type == CustomCommandType.Execute)) {
+					if (addedConfigs.Any (cc => cc.Equals (cmd)))
+						continue;
+					string exe, args;
+					cmd.ParseCommand (out exe, out args);
+
+					//if the executable name matches an executable in the project directory, use that, for back-compat
+					//else fall back and let the execution handler handle it via PATH, working directory, etc.
+					if (!Path.IsPathRooted (exe)) {
+						string localPath = ((FilePath)exe).ToAbsolute (BaseDirectory).FullPath;
+						if (File.Exists (localPath))
+							exe = localPath;
 					}
+
+					// If the project doesn't have any default run configuration, use the custom command as default configuration
+					AssemblyRunConfiguration rc = RunConfigurations.OfType<AssemblyRunConfiguration> ().FirstOrDefault (co => co.IsDefaultConfiguration && co.IsEmpty);
+
+					if (rc == null) {
+						// There is already a default configuration. Use a custom command.
+						var name = "Custom Command";
+						if (count++ > 1)
+							name += " " + count;
+						rc = new AssemblyRunConfiguration (name);
+					}
+					rc.StartAction = AssemblyRunConfiguration.StartActions.Program;
+					rc.StartProgram = exe ?? "";
+					rc.StartArguments = args ?? "";
+					rc.StartWorkingDirectory = cmd.WorkingDir ?? "";
+					rc.PauseConsoleOutput = cmd.PauseExternalConsole;
+					rc.ExternalConsole = cmd.ExternalConsole;
+					rc.EnvironmentVariables.CopyFrom (cmd.EnvironmentVariables);
+					rc.StoreInUserFile = false;
+					if (!rc.IsDefaultConfiguration)
+						RunConfigurations.Add (rc);
+					addedConfigs.Add (cmd);
 				}
+				c.CustomCommands.RemoveAll (cc => cc.Type == CustomCommandType.Execute);
 			}
 		}
 
@@ -1747,6 +1842,12 @@ namespace MonoDevelop.Projects
 			if (MSBuildProject.IsNewProject)
 				pset.SetValue ("ErrorReport", "prompt");
 			
+		}
+
+		protected override async Task OnReevaluateProject (ProgressMonitor monitor)
+		{
+			await base.OnReevaluateProject (monitor);
+			NotifyReferencedAssembliesChanged ();
 		}
 
 		internal class DefaultDotNetProjectExtension: DotNetProjectExtension

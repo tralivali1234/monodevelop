@@ -69,9 +69,6 @@ namespace MonoDevelop.Ide
 		static ImageService ()
 		{
 			iconFactory.AddDefault ();
-			IconId.IconNameRequestHandler = delegate (string stockId) {
-				EnsureStockIconIsLoaded (stockId);
-			};
 
 			AddinManager.AddExtensionNodeHandler (IconsExtensionPath, delegate (object sender, ExtensionNodeEventArgs args) {
 				StockIconCodon iconCodon = (StockIconCodon)args.ExtensionNode;
@@ -170,6 +167,21 @@ namespace MonoDevelop.Ide
 			name = GetStockIdForImageSpec (name, size);
 			return GetIcon (name).WithSize (size);
 		}
+
+		public static void AddIcon (string iconId, Xwt.Drawing.Image icon)
+		{
+			if (iconId == null)
+				throw new ArgumentNullException (nameof (iconId));
+			if (icon == null)
+				throw new ArgumentNullException (nameof (icon));
+			icons.Add (iconId, icon);
+		}
+
+		public static bool HasIcon (string iconId)
+		{
+			return icons.ContainsKey (iconId);
+		}
+
 
 		public static Xwt.Drawing.Image GetIcon (string name)
 		{

@@ -440,7 +440,9 @@ namespace MonoDevelop.AssemblyBrowser
 			if (type is GetClassTypeReference) {
 				var r = (GetClassTypeReference)type;
 				var n = r.FullTypeName.TopLevelTypeName;
-				result.Append (n.Namespace + "." + n.Name);
+				result.Append (n.Namespace);
+				result.Append ('.');
+				result.Append (n.Name);
 				return;
 			}
 
@@ -449,7 +451,8 @@ namespace MonoDevelop.AssemblyBrowser
 			}
 
 			if (type is TypeParameterReference) {
-				result.Append ("`" +((TypeParameterReference)type).Index);
+				result.Append ('`');
+				result.Append (((TypeParameterReference)type).Index);
 			}
 		}
 		
@@ -617,7 +620,8 @@ namespace MonoDevelop.AssemblyBrowser
 				return true;
 			return false;
 		}
-		
+
+		bool expandedMember = true;
 		ITreeNavigator SearchMember (ITreeNavigator nav, string helpUrl, bool expandNode = true)
 		{
 			if (nav == null)
@@ -627,13 +631,11 @@ namespace MonoDevelop.AssemblyBrowser
 				if (IsMatch (nav, helpUrl, searchType)) {
 					inspectEditor.ClearSelection ();
 					nav.ExpandToNode ();
-					if (expandNode) {
-						nav.Selected = nav.Expanded = true;
-						nav.ScrollToNode ();
-					} else {
-						nav.Selected = true;
-						nav.ScrollToNode ();
-					}
+					if (expandNode)
+						nav.Expanded = true;
+					nav.Selected = true;
+					nav.ScrollToNode ();
+					expandedMember = true;
 					return nav;
 				}
 				if (!SkipChildren (nav, helpUrl, searchType) && nav.HasChildren ()) {
@@ -791,7 +793,7 @@ namespace MonoDevelop.AssemblyBrowser
 			var publicOnly = PublicApiOnly;
 			BackgroundWorker worker = sender as BackgroundWorker;
 			try {
-				string pattern = e.Argument.ToString ().ToUpper ();
+				string pattern = e.Argument.ToString ();
 				int types = 0, curType = 0;
 				foreach (var unit in this.definitions) {
 					types += unit.UnresolvedAssembly.TopLevelTypeDefinitions.Count ();
@@ -812,7 +814,7 @@ namespace MonoDevelop.AssemblyBrowser
 									return;
 								if (!member.IsPublic && publicOnly)
 									continue;
-								if (member.Name.ToUpper ().Contains (pattern)) {
+								if (member.Name.IndexOf (pattern, StringComparison.OrdinalIgnoreCase) != -1) {
 									members.Add (member);
 								}
 							}
@@ -939,7 +941,7 @@ namespace MonoDevelop.AssemblyBrowser
 							if (!type.IsPublic && publicOnly)
 								continue;
 							var parent = type.FullName;
-							if (parent.ToUpper ().IndexOf (pattern, StringComparison.Ordinal) >= 0)
+							if (parent.IndexOf (pattern, StringComparison.OrdinalIgnoreCase) >= 0)
 								typeList.Add (Tuple.Create ((IUnresolvedEntity)type, type.Namespace));
 							
 							foreach (var member in type.Members) {
@@ -947,7 +949,7 @@ namespace MonoDevelop.AssemblyBrowser
 									return;
 								if (!member.IsPublic && publicOnly)
 									continue;
-								if (member.Name.ToUpper ().Contains (pattern)) {
+								if (member.Name.IndexOf (pattern, StringComparison.OrdinalIgnoreCase) != -1) {
 									typeList.Add (Tuple.Create ((IUnresolvedEntity)member, parent));
 								}
 							}
@@ -1080,7 +1082,7 @@ namespace MonoDevelop.AssemblyBrowser
 						case "number":
 							int i = 1;
 							foreach (XmlNode child in node.ChildNodes) {
-								sb.Append ("    <b>" + i++ +"</b> ");
+								sb.Append ("    <b>").Append (i++).Append ("</b> ");
 								OutputNode (sb, child);
 							}
 							break;
@@ -1138,7 +1140,7 @@ namespace MonoDevelop.AssemblyBrowser
 				result.Append ("<big><b>Parameters</b></big>");
 				foreach (XmlNode paraNode in nodes) {
 					result.AppendLine ();
-					result.AppendLine ("  <i>" + paraNode.Attributes["name"].InnerText +  "</i>");
+					result.Append ("  <i>").Append (paraNode.Attributes["name"].InnerText).AppendLine ("</i>");
 					result.Append ("    ");
 					OutputChilds (result, paraNode);
 				}
@@ -1374,6 +1376,8 @@ namespace MonoDevelop.AssemblyBrowser
 					return;
 				}
 				var result = AddReferenceByFileName (fileName);
+				if (result == null)
+					return;
 				result.LoadingTask.ContinueWith (t2 => {
 					if (definitions == null) // disposed
 						return;
@@ -1437,31 +1441,28 @@ namespace MonoDevelop.AssemblyBrowser
 			}, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Current);
 		}
 		
-		public void SelectAssembly (string fileName)
+		internal void SelectAssembly (AssemblyLoader loader)
 		{
-			AssemblyDefinition cu = null;
-			foreach (var unit in definitions) {
-				if (unit.UnresolvedAssembly.AssemblyName == fileName || unit.UnresolvedAssembly.Location == fileName) {
-					cu = unit.CecilLoader.GetCecilObject (unit.UnresolvedAssembly);
-					unit.LoadingTask.ContinueWith (t => {
-						Application.Invoke (delegate {
-							ITreeNavigator nav = TreeView.GetRootNode ();
-							if (nav == null)
-								return;
+			AssemblyDefinition cu = loader.CecilLoader.GetCecilObject (loader.UnresolvedAssembly);
+			Application.Invoke (delegate {
+				ITreeNavigator nav = TreeView.GetRootNode ();
+				if (nav == null)
+					return;
 
-							do {
-								if (nav.DataItem == cu || (nav.DataItem as AssemblyLoader)?.Assembly == cu) {
-									nav.ExpandToNode ();
-									nav.Selected = true;
-									nav.ScrollToNode ();
-									return;
-								}
-							} while (nav.MoveNext ());
-						});
-					});
+				if (expandedMember) {
+					expandedMember = false;
 					return;
 				}
-			}
+
+				do {
+					if (nav.DataItem == cu || (nav.DataItem as AssemblyLoader)?.Assembly == cu) {
+						nav.ExpandToNode ();
+						nav.Selected = true;
+						nav.ScrollToNode ();
+						return;
+					}
+				} while (nav.MoveNext ());
+			});
 		}
 		
 		void Dispose (ITreeNavigator nav)

@@ -1,4 +1,4 @@
-//
+﻿//
 // MonoDevelopWorkspace.cs
 //
 // Author:
@@ -44,54 +44,97 @@ using System.Reflection;
 using Microsoft.CodeAnalysis.Host.Mef;
 using System.Text;
 using System.Collections.Immutable;
+using System.ComponentModel;
+using Mono.Addins;
+using MonoDevelop.Core.AddIns;
+using Microsoft.CodeAnalysis.Shared.Utilities;
 
 namespace MonoDevelop.Ide.TypeSystem
 {
 
 	public class MonoDevelopWorkspace : Workspace
 	{
+		public const string ServiceLayer = nameof(MonoDevelopWorkspace);
+
 		readonly static HostServices services;
 		internal readonly WorkspaceId Id;
 
 		CancellationTokenSource src = new CancellationTokenSource ();
-		MonoDevelop.Projects.Solution currentMonoDevelopSolution;
+		bool disposed;
+		readonly MonoDevelop.Projects.Solution monoDevelopSolution;
 		object addLock = new object();
 		bool added;
-		bool internalChanges;
 
 		public MonoDevelop.Projects.Solution MonoDevelopSolution {
 			get {
-				return currentMonoDevelopSolution;
+				return monoDevelopSolution;
 			}
 		}
 
 		static string[] mefHostServices = new [] {
 			"Microsoft.CodeAnalysis.Workspaces",
+			//FIXME: this does not load yet. We should provide alternate implementations of its services.
+			//"Microsoft.CodeAnalysis.Workspaces.Desktop",
+			"Microsoft.CodeAnalysis.Features",
+			"Microsoft.CodeAnalysis.CSharp",
 			"Microsoft.CodeAnalysis.CSharp.Workspaces",
-//			"Microsoft.CodeAnalysis.VisualBasic.Workspaces"
+			"Microsoft.CodeAnalysis.CSharp.Features",
+			"Microsoft.CodeAnalysis.VisualBasic",
+			"Microsoft.CodeAnalysis.VisualBasic.Workspaces",
+			"Microsoft.CodeAnalysis.VisualBasic.Features",
 		};
+
+		internal static HostServices HostServices {
+			get {
+				return services;
+			}
+		}
 
 		static MonoDevelopWorkspace ()
 		{
 			List<Assembly> assemblies = new List<Assembly> ();
+			assemblies.Add (typeof (MonoDevelopWorkspace).Assembly);
 			foreach (var asmName in mefHostServices) {
 				try {
 					var asm = Assembly.Load (asmName);
 					if (asm == null)
 						continue;
 					assemblies.Add (asm);
-				} catch (Exception) {
-					LoggingService.LogError ("Error - can't load host service assembly: " + asmName);
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error - can't load host service assembly: " + asmName, ex);
 				}
 			}
 			assemblies.Add (typeof(MonoDevelopWorkspace).Assembly);
-			services = Microsoft.CodeAnalysis.Host.Mef.MefHostServices.Create (assemblies);
+			foreach (var node in AddinManager.GetExtensionNodes ("/MonoDevelop/Ide/TypeService/MefHostServices")) {
+				var assemblyNode = node as AssemblyExtensionNode;
+				if (assemblyNode == null)
+					continue;
+				try {
+					var assemblyFilePath = assemblyNode.Addin.GetFilePath(assemblyNode.FileName);
+					var assembly = Assembly.LoadFrom(assemblyFilePath);
+					assemblies.Add (assembly);
+				} catch (Exception e) {
+					LoggingService.LogError ("Workspace can't load assembly " + assemblyNode.FileName + " to host mef services.", e);
+					continue;
+				}
+			}
+			services = MefHostServices.Create (assemblies);
 		}
 
-		internal MonoDevelopWorkspace () : base (services, ServiceLayer.Desktop)
+		/// <summary>
+		/// This bypasses the type system service. Use with care.
+		/// </summary>
+		[EditorBrowsable(EditorBrowsableState.Never)]
+		internal void OpenSolutionInfo (SolutionInfo sInfo)
 		{
+			OnSolutionAdded (sInfo);
+		}
+
+		internal MonoDevelopWorkspace (MonoDevelop.Projects.Solution solution) : base (services, "MonoDevelop")
+		{
+			this.monoDevelopSolution = solution;
 			this.Id = WorkspaceId.Next ();
-			if (IdeApp.Workspace != null) {
+			if (IdeApp.Workspace != null && solution != null) {
 				IdeApp.Workspace.ActiveConfigurationChanged += HandleActiveConfigurationChanged;
 			}
 		}
@@ -99,15 +142,15 @@ namespace MonoDevelop.Ide.TypeSystem
 		protected override void Dispose (bool finalize)
 		{
 			base.Dispose (finalize);
+			if (disposed)
+				return;
+			disposed = true;
 			CancelLoad ();
 			if (IdeApp.Workspace != null) {
 				IdeApp.Workspace.ActiveConfigurationChanged -= HandleActiveConfigurationChanged;
 			}
-			if (currentMonoDevelopSolution != null) {
-				foreach (var prj in currentMonoDevelopSolution.GetAllProjects ()) {
-					UnloadMonoProject (prj);
-				}
-				currentMonoDevelopSolution = null;
+			foreach (var prj in monoDevelopSolution.GetAllProjects ()) {
+				UnloadMonoProject (prj);
 			}
 		}
 
@@ -163,14 +206,12 @@ namespace MonoDevelop.Ide.TypeSystem
 
 		async void HandleActiveConfigurationChanged (object sender, EventArgs e)
 		{
-			if (currentMonoDevelopSolution == null)
-				return;
 			ShowStatusIcon ();
 			CancelLoad ();
 			var token = src.Token;
 
 			try {
-				var si = await CreateSolutionInfo (currentMonoDevelopSolution, token).ConfigureAwait (false);
+				var si = await CreateSolutionInfo (monoDevelopSolution, token).ConfigureAwait (false);
 				if (si != null)
 					OnSolutionReloaded (si);
 			} catch (OperationCanceledException) {
@@ -190,6 +231,8 @@ namespace MonoDevelop.Ide.TypeSystem
 				var projects = new ConcurrentBag<ProjectInfo> ();
 				var mdProjects = solution.GetAllProjects ();
 				projectionList.Clear ();
+				projectIdMap.Clear ();
+				projectDataMap.Clear ();
 				solutionData = new SolutionData ();
 				List<Task> allTasks = new List<Task> ();
 				foreach (var proj in mdProjects) {
@@ -204,10 +247,11 @@ namespace MonoDevelop.Ide.TypeSystem
 					});
 					allTasks.Add (tp);
 				}
-				await Task.WhenAll (allTasks.ToArray ());
+				await Task.WhenAll (allTasks.ToArray ()).ConfigureAwait (false);
 				if (token.IsCancellationRequested)
 					return null;
-				var modifiedWhileLoading = modifiedProjects = new List<MonoDevelop.Projects.DotNetProject> ();
+				var modifiedWhileLoading = modifiedProjects;
+				modifiedProjects = new List<MonoDevelop.Projects.DotNetProject> ();
 				var solutionInfo = SolutionInfo.Create (GetSolutionId (solution), VersionStamp.Create (), solution.FileName, projects);
 				foreach (var project in modifiedWhileLoading) {
 					if (solution.ContainsItem (project)) {
@@ -225,10 +269,9 @@ namespace MonoDevelop.Ide.TypeSystem
 			});
 		}
 
-		internal Task<SolutionInfo> TryLoadSolution (MonoDevelop.Projects.Solution solution, CancellationToken cancellationToken = default(CancellationToken))
+		internal Task<SolutionInfo> TryLoadSolution (CancellationToken cancellationToken = default(CancellationToken))
 		{
-			this.currentMonoDevelopSolution = solution;
-			return CreateSolutionInfo (solution, cancellationToken);
+			return CreateSolutionInfo (monoDevelopSolution, CancellationTokenSource.CreateLinkedTokenSource (cancellationToken, src.Token).Token);
 		}
 
 		internal void UnloadSolution ()
@@ -308,14 +351,11 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 		}
 
-		ProjectData GetOrCreateProjectData (ProjectId id)
+		ProjectData CreateProjectData (ProjectId id)
 		{
 			lock (projectIdMap) {
-				ProjectData result;
-				if (!projectDataMap.TryGetValue (id, out result)) {
-					result = new ProjectData (id);
-					projectDataMap [id] = result;
-				}
+				var result = new ProjectData (id);
+				projectDataMap [id] = result;
 				return result;
 			}
 		}
@@ -336,6 +376,18 @@ namespace MonoDevelop.Ide.TypeSystem
 				documentIdMap = new Dictionary<string, DocumentId> (FilePath.PathComparer);
 			}
 
+			internal DocumentId GetOrCreateDocumentId (string name, ProjectData previous)
+			{
+				if (previous != null) {
+					var oldId = previous.GetDocumentId (name);
+					if (oldId != null) {
+						AddDocumentId (oldId, name);
+						return oldId;
+					}
+				}
+				return GetOrCreateDocumentId (name);
+			}
+
 			internal DocumentId GetOrCreateDocumentId (string name)
 			{
 				lock (documentIdMap) {
@@ -345,6 +397,13 @@ namespace MonoDevelop.Ide.TypeSystem
 						documentIdMap [name] = result;
 					}
 					return result;
+				}
+			}
+
+			internal void AddDocumentId (DocumentId id, string name)
+			{
+				lock (documentIdMap) {
+					documentIdMap[name] = id;
 				}
 			}
 			
@@ -371,11 +430,6 @@ namespace MonoDevelop.Ide.TypeSystem
 			return data.GetDocumentId (name);
 		}
 
-		public override bool CanApplyChange (ApplyChangesKind feature)
-		{
-			return true;
-		}
-
 		void UnloadMonoProject (MonoDevelop.Projects.Project project)
 		{
 			if (project == null)
@@ -396,7 +450,11 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 
 			var projectId = GetOrCreateProjectId (p);
-			var projectData = GetOrCreateProjectData (projectId);
+
+			//when reloading e.g. after a save, preserve document IDs
+			var oldProjectData = GetProjectData (projectId);
+			var projectData = CreateProjectData (projectId);
+
 			var references = await CreateMetadataReferences (p, projectId, token).ConfigureAwait (false);
 			if (token.IsCancellationRequested)
 				return null;
@@ -408,8 +466,12 @@ namespace MonoDevelop.Ide.TypeSystem
 			if (fileName.IsNullOrEmpty)
 				fileName = new FilePath (p.Name + ".dll");
 
+			if (token.IsCancellationRequested)
+				return null;
 			var sourceFiles = await p.GetSourceFilesAsync (config != null ? config.Selector : null).ConfigureAwait (false);
-
+			var documents = CreateDocuments (projectData, p, token, sourceFiles, oldProjectData);
+			if (documents == null)
+				return null;
 			var info = ProjectInfo.Create (
 				projectId,
 				VersionStamp.Create (),
@@ -420,9 +482,10 @@ namespace MonoDevelop.Ide.TypeSystem
 				fileName,
 				cp != null ? cp.CreateCompilationOptions () : null,
 				cp != null ? cp.CreateParseOptions (config) : null,
-				CreateDocuments (projectData, p, token, sourceFiles),
+				documents.Item1,
 				CreateProjectReferences (p, token),
-				references
+				references,
+				additionalDocuments: documents.Item2
 			);
 			projectData.Info = info;
 			return info;
@@ -435,7 +498,7 @@ namespace MonoDevelop.Ide.TypeSystem
 			if (projections == null)
 				throw new ArgumentNullException (nameof (projections));
 			foreach (var entry in projectionList) {
-				if (entry.File.FilePath == projectFile.FilePath) {
+				if (entry?.File?.FilePath == projectFile.FilePath) {
 					projectionList.Remove (entry);
 					break;
 				}
@@ -478,32 +541,51 @@ namespace MonoDevelop.Ide.TypeSystem
 			public IReadOnlyList<Projection> Projections;
 		}
 
-		IEnumerable<DocumentInfo> CreateDocuments (ProjectData projectData, MonoDevelop.Projects.Project p, CancellationToken token, MonoDevelop.Projects.ProjectFile [] sourceFiles)
+		static bool CanGenerateAnalysisContextForNonCompileable (MonoDevelop.Projects.Project p, MonoDevelop.Projects.ProjectFile f)
 		{
-			var duplicates = new HashSet<DocumentId> ();
+			var mimeType = DesktopService.GetMimeTypeForUri (f.FilePath);
+			var node = TypeSystemService.GetTypeSystemParserNode (mimeType, f.BuildAction);
+			if (node?.Parser == null)
+				return false;
+			return node.Parser.CanGenerateAnalysisDocument (mimeType, f.BuildAction, p.SupportedLanguages);
+		}
 
+		Tuple<List<DocumentInfo>, List<DocumentInfo>> CreateDocuments (ProjectData projectData, MonoDevelop.Projects.Project p, CancellationToken token, MonoDevelop.Projects.ProjectFile [] sourceFiles, ProjectData oldProjectData)
+		{
+			var documents = new List<DocumentInfo> ();
+			var additionalDocuments = new List<DocumentInfo> ();
+			var duplicates = new HashSet<DocumentId> ();
 			// use given source files instead of project.Files because there may be additional files added by msbuild targets
 			foreach (var f in sourceFiles) {
 				if (token.IsCancellationRequested)
-					yield break;
+					return null;
 				if (f.Subtype == MonoDevelop.Projects.Subtype.Directory)
 					continue;
+
 				SourceCodeKind sck;
-				if (TypeSystemParserNode.IsCompileableFile (f, out sck)) {
-					if (!duplicates.Add (projectData.GetOrCreateDocumentId (f.Name)))
+				if (TypeSystemParserNode.IsCompileableFile (f, out sck) || CanGenerateAnalysisContextForNonCompileable (p, f)) {
+					var id = projectData.GetOrCreateDocumentId (f.Name, oldProjectData);
+					if (!duplicates.Add (id))
 						continue;
-					yield return CreateDocumentInfo (solutionData, p.Name, projectData, f, sck);
+					documents.Add (CreateDocumentInfo (solutionData, p.Name, projectData, f, sck));
 				} else {
-					foreach (var projectedDocument in GenerateProjections (f, projectData, p)) {
-						if (!duplicates.Add (projectData.GetOrCreateDocumentId (projectedDocument.FilePath)))
+					var id = projectData.GetOrCreateDocumentId (f.Name, projectData);
+					if (!duplicates.Add (id))
+						continue;
+					additionalDocuments.Add (CreateDocumentInfo (solutionData, p.Name, projectData, f, sck));
+
+					foreach (var projectedDocument in GenerateProjections (f, projectData, p, oldProjectData)) {
+						var projectedId = projectData.GetOrCreateDocumentId (projectedDocument.FilePath, oldProjectData);
+						if (!duplicates.Add (projectedId))
 							continue;
-						yield return projectedDocument;
+						documents.Add (projectedDocument);
 					}
 				}
 			}
+			return Tuple.Create (documents, additionalDocuments);
 		}
 
-		IEnumerable<DocumentInfo> GenerateProjections (MonoDevelop.Projects.ProjectFile f, ProjectData projectData, MonoDevelop.Projects.Project p, HashSet<DocumentId> duplicates = null)
+		IEnumerable<DocumentInfo> GenerateProjections (MonoDevelop.Projects.ProjectFile f, ProjectData projectData, MonoDevelop.Projects.Project p, ProjectData oldProjectData, HashSet<DocumentId> duplicates = null)
 		{
 			var mimeType = DesktopService.GetMimeTypeForUri (f.FilePath);
 			var node = TypeSystemService.GetTypeSystemParserNode (mimeType, f.BuildAction);
@@ -521,11 +603,11 @@ namespace MonoDevelop.Ide.TypeSystem
 			entry.Projections = list;
 			foreach (var projection in projections.Result) {
 				list.Add (projection);
-				if (duplicates != null && !duplicates.Add (projectData.GetOrCreateDocumentId (projection.Document.FileName)))
+				if (duplicates != null && !duplicates.Add (projectData.GetOrCreateDocumentId (projection.Document.FileName, oldProjectData)))
 					continue;
 				var plainName = projection.Document.FileName.FileName;
 				yield return DocumentInfo.Create (
-					projectData.GetOrCreateDocumentId (projection.Document.FileName),
+					projectData.GetOrCreateDocumentId (projection.Document.FileName, oldProjectData),
 					plainName,
 					new [] { p.Name }.Concat (f.ProjectVirtualPath.ParentDirectory.ToString ().Split (Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
 					SourceCodeKind.Regular,
@@ -537,6 +619,15 @@ namespace MonoDevelop.Ide.TypeSystem
 			projectionList.Add (entry);
 		}
 
+		internal static readonly string [] DefaultAssemblies = {
+			typeof(string).Assembly.Location,                                // mscorlib
+			typeof(System.Text.RegularExpressions.Regex).Assembly.Location,  // System
+			typeof(System.Linq.Enumerable).Assembly.Location,                // System.Core
+			typeof(System.Data.VersionNotFoundException).Assembly.Location,  // System.Data
+			typeof(System.Xml.XmlDocument).Assembly.Location,                // System.Xml
+		};
+
+
 		static async Task<List<MetadataReference>> CreateMetadataReferences (MonoDevelop.Projects.Project proj, ProjectId projectId, CancellationToken token)
 		{
 			List<MetadataReference> result = new List<MetadataReference> ();
@@ -544,19 +635,10 @@ namespace MonoDevelop.Ide.TypeSystem
 			var netProject = proj as MonoDevelop.Projects.DotNetProject;
 			if (netProject == null) {
 				// create some default references for unsupported project types.
-				string [] assemblies = {
-					typeof(string).Assembly.Location,                                // mscorlib
-					typeof(System.Text.RegularExpressions.Regex).Assembly.Location,  // System
-					typeof(System.Linq.Enumerable).Assembly.Location,                // System.Core
-					typeof(System.Data.VersionNotFoundException).Assembly.Location,  // System.Data
-					typeof(System.Xml.XmlDocument).Assembly.Location,                // System.Xml
-				};
-
-				foreach (var asm in assemblies) {
+				foreach (var asm in DefaultAssemblies) {
 					var metadataReference = MetadataReferenceCache.LoadReference (projectId, asm);
 					result.Add (metadataReference);
 				}
-
 				return result;
 			}
 			var configurationSelector = IdeApp.Workspace?.ActiveConfiguration ?? MonoDevelop.Projects.ConfigurationSelector.Default;
@@ -584,20 +666,24 @@ namespace MonoDevelop.Ide.TypeSystem
 				LoggingService.LogError ("Error while getting referenced assemblies", e);
 			}
 
-			foreach (var pr in netProject.GetReferencedItems (configurationSelector)) {
-				if (token.IsCancellationRequested)
-					return result;
-				var referencedProject = pr as MonoDevelop.Projects.DotNetProject;
-				if (referencedProject == null)
-					continue;
-				if (TypeSystemService.IsOutputTrackedProject (referencedProject)) {
-					var fileName = referencedProject.GetOutputFileName (configurationSelector);
-					if (!hashSet.Add (fileName))
+			try {
+				foreach (var pr in netProject.GetReferencedItems (configurationSelector)) {
+					if (token.IsCancellationRequested)
+						return result;
+					var referencedProject = pr as MonoDevelop.Projects.DotNetProject;
+					if (referencedProject == null)
 						continue;
-					var metadataReference = MetadataReferenceCache.LoadReference (projectId, fileName);
-					if (metadataReference != null)
-						result.Add (metadataReference);
+					if (TypeSystemService.IsOutputTrackedProject (referencedProject)) {
+						var fileName = referencedProject.GetOutputFileName (configurationSelector);
+						if (!hashSet.Add (fileName))
+							continue;
+						var metadataReference = MetadataReferenceCache.LoadReference (projectId, fileName);
+						if (metadataReference != null)
+							result.Add (metadataReference);
+					}
 				}
+			} catch (Exception e) {
+				LoggingService.LogError ("Error while getting referenced projects", e);
 			}
 			return result;
 		}
@@ -612,7 +698,13 @@ namespace MonoDevelop.Ide.TypeSystem
 			//MSBuild Condtion='something'
 			//pref.ReferenceOutputAssembly
 			//and for iOS/Android extensions
-			var referencedProjects = netProj.GetReferencedAssemblyProjects (IdeApp.Workspace?.ActiveConfiguration ?? MonoDevelop.Projects.ConfigurationSelector.Default).ToArray ();
+			MonoDevelop.Projects.DotNetProject [] referencedProjects;
+			try {
+				referencedProjects = netProj.GetReferencedAssemblyProjects (IdeApp.Workspace?.ActiveConfiguration ?? MonoDevelop.Projects.ConfigurationSelector.Default).ToArray ();
+			} catch (Exception e) {
+				LoggingService.LogError ("Error while getting referenced projects.", e);
+				yield break;
+			};
 			var addedProjects = new HashSet<MonoDevelop.Projects.DotNetProject> ();
 			foreach (var pr in netProj.References.Where (pr => pr.ReferenceType == MonoDevelop.Projects.ReferenceType.Project)) {
 				//But since GetReferencedAssemblyProjects is returing DotNetProject, we lose information about
@@ -638,55 +730,47 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 		}
 
+		public override void OpenDocument (DocumentId documentId, bool activate = true)
+		{
+			var doc = GetDocument (documentId);
+			if (doc != null) {
+				var mdProject = GetMonoProject (doc.Project);
+				if (doc != null) {
+					IdeApp.Workbench.OpenDocument (doc.FilePath, mdProject, activate);
+				}
+			}
+		}
+
 		List<MonoDevelopSourceTextContainer> openDocuments = new List<MonoDevelopSourceTextContainer>();
 		internal void InformDocumentOpen (DocumentId documentId, ITextDocument editor)
 		{
 			var document = InternalInformDocumentOpen (documentId, editor);
-			if (document != null) {
-				foreach (var linkedDoc in document.GetLinkedDocumentIds ()) {
+			if (document as Document != null) {
+				foreach (var linkedDoc in ((Document)document).GetLinkedDocumentIds ()) {
 					InternalInformDocumentOpen (linkedDoc, editor);
 				}
 			}
 		}
 
-		Document InternalInformDocumentOpen (DocumentId documentId, ITextDocument editor)
+		TextDocument InternalInformDocumentOpen (DocumentId documentId, ITextDocument editor)
 		{
-			var document = this.GetDocument (documentId);
-			if (document == null || IsDocumentOpen (documentId)) {
+			TextDocument document = this.GetDocument (documentId) ?? this.GetAdditionalDocument (documentId);
+			if (document == null || openDocuments.Any (d => d.Id == documentId)) {
 				return document;
 			}
 			var monoDevelopSourceTextContainer = new MonoDevelopSourceTextContainer (documentId, editor);
 			lock (openDocuments) {
 				openDocuments.Add (monoDevelopSourceTextContainer);
 			}
-			OnDocumentOpened (documentId, monoDevelopSourceTextContainer);
+			if (document is Document) {
+				OnDocumentOpened (documentId, monoDevelopSourceTextContainer);
+			} else {
+				OnAdditionalDocumentOpened (documentId, monoDevelopSourceTextContainer);
+			}
 			return document;
 		}
 
-		Dictionary<string, SourceText> changedFiles = new Dictionary<string, SourceText> ();
 		ProjectChanges projectChanges;
-
-		public override bool TryApplyChanges (Solution newSolution)
-		{
-			changedFiles.Clear ();
-			return base.TryApplyChanges (newSolution);
-		}
-
-		protected override void ApplyProjectChanges (ProjectChanges projectChanges)
-		{
-			try {
-				internalChanges = true;
-				this.projectChanges = projectChanges;
-				base.ApplyProjectChanges (projectChanges);
-			} finally {
-				internalChanges = false;
-			}
-		}
-
-		protected override void ApplyAdditionalDocumentAdded (DocumentInfo info, SourceText text)
-		{
-			base.ApplyAdditionalDocumentAdded (info, text);
-		}
 
 		protected override void OnDocumentTextChanged (Document document)
 		{
@@ -714,9 +798,30 @@ namespace MonoDevelop.Ide.TypeSystem
 		internal void InformDocumentClose (DocumentId analysisDocument, string filePath)
 		{
 			try {
+				lock (openDocuments) {
+					var openDoc = openDocuments.FirstOrDefault (d => d.Id == analysisDocument);
+					if (openDoc != null) {
+						openDoc.Dispose ();
+						openDocuments.Remove (openDoc);
+					}
+				}
+				if (!CurrentSolution.ContainsDocument (analysisDocument))
+					return;
 				var loader = new MonoDevelopTextLoader (filePath);
-				OnDocumentClosed (analysisDocument, loader); 
 				var document = this.GetDocument (analysisDocument);
+				var openDocument = this.openDocuments.FirstOrDefault (w => w.Id == analysisDocument);
+				if (openDocument != null) {
+					openDocument.Dispose ();
+					openDocuments.Remove (openDocument);
+				}
+
+				if (document == null) {
+					var ad = this.GetAdditionalDocument (analysisDocument);
+					if (ad != null)
+						OnAdditionalDocumentClosed (analysisDocument, loader);
+					return;
+				}
+				OnDocumentClosed (analysisDocument, loader);
 				foreach (var linkedDoc in document.GetLinkedDocumentIds ()) {
 					OnDocumentClosed (linkedDoc, loader); 
 				}
@@ -729,15 +834,19 @@ namespace MonoDevelop.Ide.TypeSystem
 		{
 		}
 
+		//FIXME: this should NOT be async. our implementation is doing some very expensive things like formatting that it shouldn't need to do.
+		protected override void ApplyDocumentTextChanged (DocumentId id, SourceText text)
+		{
+			tryApplyState_documentTextChangedTasks.Add (ApplyDocumentTextChangedCore (id, text));
+		}
 
-		protected override async void ApplyDocumentTextChanged (DocumentId id, SourceText text)
+		async Task ApplyDocumentTextChangedCore (DocumentId id, SourceText text)
 		{
 			var document = GetDocument (id);
 			if (document == null)
 				return;
 			bool isOpen;
 			var filePath = document.FilePath;
-
 			Projection projection = null;
 			foreach (var entry in ProjectionList) {
 				var p = entry.Projections.FirstOrDefault (proj => proj?.Document?.FileName != null && FilePath.PathComparer.Equals (proj.Document.FileName, filePath));
@@ -747,20 +856,21 @@ namespace MonoDevelop.Ide.TypeSystem
 					break;
 				}
 			}
-
 			var data = TextFileProvider.Instance.GetTextEditorData (filePath, out isOpen);
-
 			// Guard against already done changes in linked files.
 			// This shouldn't happen but the roslyn merging seems not to be working correctly in all cases :/
 			if (document.GetLinkedDocumentIds ().Length > 0 && isOpen && !(text.GetType ().FullName == "Microsoft.CodeAnalysis.Text.ChangedText")) {
 				return;
 			}
+
 			SourceText formerText;
-			if (changedFiles.TryGetValue (filePath, out formerText)) {
-				if (formerText.Length == text.Length && formerText.ToString () == text.ToString ())
-					return;
+			lock (tryApplyState_documentTextChangedContents) {
+				if (tryApplyState_documentTextChangedContents.TryGetValue (filePath, out formerText)) {
+					if (formerText.Length == text.Length && formerText.ToString () == text.ToString ())
+						return;
+				}
+				tryApplyState_documentTextChangedContents[filePath] = text;
 			}
-			changedFiles [filePath] = text;
 
 			SourceText oldFile;
 			if (!isOpen || !document.TryGetText (out oldFile)) {
@@ -859,8 +969,10 @@ namespace MonoDevelop.Ide.TypeSystem
 									// Just to get sure if no insertion points -> go back to the formatted version.
 									var textChanges = editor.Version.GetChangesTo (formattedVersion).ToList ();
 									using (var undo2 = editor.OpenUndoGroup ()) {
-										foreach (var v in textChanges) {
-											editor.ReplaceText (v.Offset, v.RemovalLength, v.InsertedText);
+										foreach (var textChange in textChanges) {
+											foreach (var v in textChange.TextChanges.Reverse ()) {
+												editor.ReplaceText (v.Offset, v.RemovalLength, v.InsertedText);
+											}
 										}
 									}
 									return;
@@ -874,8 +986,10 @@ namespace MonoDevelop.Ide.TypeSystem
 								if (!isMethod) {
 									// atm only for generate field/property : remove all new lines generated & just insert the plain node.
 									// for methods it's not so easy because of "extract code" changes.
-									foreach (var v in editor.Version.GetChangesTo (oldVersion).ToList ()) {
-										editor.ReplaceText (v.Offset, v.RemovalLength, v.InsertedText);
+									foreach (var textChange in editor.Version.GetChangesTo (oldVersion).ToList ()) {
+										foreach (var v in textChange.TextChanges.Reverse ()) {
+											editor.ReplaceText (v.Offset, v.RemovalLength, v.InsertedText);
+										}
 									}
 								}
 
@@ -907,8 +1021,9 @@ namespace MonoDevelop.Ide.TypeSystem
 									if (!args.Success) {
 										var textChanges = editor.Version.GetChangesTo (oldVersion).ToList ();
 										using (var undo2 = editor.OpenUndoGroup ()) {
-											foreach (var v in textChanges) {
-												editor.ReplaceText (v.Offset, v.RemovalLength, v.InsertedText);
+											foreach (var textChange in textChanges) {
+												foreach (var v in textChange.TextChanges.Reverse ())
+													editor.ReplaceText (v.Offset, v.RemovalLength, v.InsertedText);
 											}
 										}
 									}
@@ -935,11 +1050,6 @@ namespace MonoDevelop.Ide.TypeSystem
 				} else {
 					OnDocumentTextChanged (id, new MonoDevelopSourceText (data.CreateDocumentSnapshot ()), PreservationMode.PreserveValue);
 				}
-				await Runtime.RunInMainThread (() => {
-						if (IdeApp.Workbench != null)
-						foreach (var w in IdeApp.Workbench.Documents)
-							w.StartReparseThread ();
-				});
 			}
 		}
 		internal static Func<TextEditor, int, Task<List<InsertionPoint>>> GetInsertionPoints;
@@ -966,7 +1076,7 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 		}
 
-		static int ApplyChanges (Projection projection, ITextDocument data, List<TextChange> changes)
+		static int ApplyChanges (Projection projection, ITextDocument data, List<Microsoft.CodeAnalysis.Text.TextChange> changes)
 		{
 			int delta = 0;
 			foreach (var change in changes) {
@@ -989,6 +1099,75 @@ namespace MonoDevelop.Ide.TypeSystem
 			return delta;
 		}
 
+		// used to pass additional state from Apply* to TryApplyChanges so it can batch certain operations such as saving projects
+		HashSet<MonoDevelop.Projects.Project> tryApplyState_changedProjects = new HashSet<MonoDevelop.Projects.Project> ();
+		List<Task> tryApplyState_documentTextChangedTasks = new List<Task> ();
+		Dictionary<string, SourceText> tryApplyState_documentTextChangedContents =  new Dictionary<string, SourceText> ();
+
+		internal override bool TryApplyChanges (Solution newSolution, IProgressTracker progressTracker)
+		{
+			// this is supported on the main thread only
+			// see https://github.com/dotnet/roslyn/pull/18043
+			// as a result, we can assume that the things it calls are _also_ main thread only
+			Runtime.CheckMainThread ();
+
+			try {
+				var ret = base.TryApplyChanges (newSolution, progressTracker);
+
+				if (tryApplyState_documentTextChangedTasks.Count > 0) {
+					Task.WhenAll (tryApplyState_documentTextChangedTasks).ContinueWith (t => {
+						try {
+							t.Wait ();
+						}
+						catch (Exception ex) {
+							LoggingService.LogError ("Error applying changes to documents", ex);
+						}
+						if (IdeApp.Workbench != null) {
+							var changedFiles = new HashSet<string> (tryApplyState_documentTextChangedContents.Keys, FilePath.PathComparer);
+							foreach (var w in IdeApp.Workbench.Documents) {
+								if (w.IsFile && changedFiles.Contains (w.FileName)) {
+									w.StartReparseThread ();
+								}
+							}
+						}
+					}, CancellationToken.None, TaskContinuationOptions.None, Runtime.MainTaskScheduler);
+				}
+
+				if (tryApplyState_changedProjects.Count > 0) {
+					IdeApp.ProjectOperations.SaveAsync (tryApplyState_changedProjects);
+				}
+
+				return ret;
+			}
+			finally {
+				tryApplyState_documentTextChangedContents.Clear ();
+				tryApplyState_documentTextChangedTasks.Clear ();
+				tryApplyState_changedProjects.Clear ();
+			}
+		}
+
+		public override bool CanApplyChange (ApplyChangesKind feature)
+		{
+			switch (feature) {
+			case ApplyChangesKind.AddDocument:
+			case ApplyChangesKind.RemoveDocument:
+			case ApplyChangesKind.ChangeDocument:
+			//HACK: we don't actually support adding and removing metadata references from project
+			//however, our MetadataReferenceCache currently depends on (incorrectly) using TryApplyChanges
+			case ApplyChangesKind.AddMetadataReference:
+			case ApplyChangesKind.RemoveMetadataReference:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		protected override void ApplyProjectChanges (ProjectChanges projectChanges)
+		{
+			this.projectChanges = projectChanges;
+			base.ApplyProjectChanges (projectChanges);
+		}
+
 		protected override void ApplyDocumentAdded (DocumentInfo info, SourceText text)
 		{
 			var id = info.Id;
@@ -1000,7 +1179,9 @@ namespace MonoDevelop.Ide.TypeSystem
 				if (mdProject == null)
 					LoggingService.LogWarning ("Couldn't find project for newly generated file {0} (Project {1}).", info.Name, info.Id.ProjectId);
 			}
+
 			var path = DetermineFilePath (info.Id, info.Name, info.FilePath, info.Folders, mdProject?.FileName.ParentDirectory, true);
+			info = info.WithFilePath (path).WithTextLoader (new MonoDevelopTextLoader (path));
 
 			string formattedText;
 			var formatter = CodeFormatterService.GetFormatter (DesktopService.GetMimeTypeForUri (path)); 
@@ -1018,12 +1199,41 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 
 			if (mdProject != null) {
+				var data = GetProjectData (id.ProjectId);
+				data.AddDocumentId (info.Id, path);
 				var file = new MonoDevelop.Projects.ProjectFile (path);
-				Application.Invoke (delegate {
-					mdProject.Files.Add (file);
-					IdeApp.ProjectOperations.SaveAsync (mdProject);
-				});
+				mdProject.Files.Add (file);
+				tryApplyState_changedProjects.Add (mdProject);
 			}
+
+			this.OnDocumentAdded (info);
+		}
+
+		protected override void ApplyDocumentRemoved (DocumentId documentId)
+		{
+			var document = GetDocument (documentId);
+			var mdProject = GetMonoProject (documentId.ProjectId);
+			if (document == null || mdProject == null) {
+				return;
+			}
+
+			FilePath filePath = document.FilePath;
+			var projectFile = mdProject.Files.GetFile (filePath);
+			if (projectFile == null) {
+				return;
+			}
+
+			//force-close the old doc even if it's dirty
+			var openDoc = IdeApp.Workbench.Documents.FirstOrDefault (d => d.IsFile && filePath.Equals (d.FileName));
+			if (openDoc != null && openDoc.IsDirty) {
+				openDoc.Save ();
+				((Gui.SdiWorkspaceWindow)openDoc.Window).CloseWindow (true, true).Wait ();
+			}
+
+			//this will fire a OnDocumentRemoved event via OnFileRemoved
+			mdProject.Files.Remove (projectFile);
+			FileService.DeleteFile (filePath);
+			tryApplyState_changedProjects.Add (mdProject);
 		}
 
 		string DetermineFilePath (DocumentId id, string name, string filePath, IReadOnlyList<string> docFolders, string defaultFolder, bool createDirectory = false)
@@ -1059,12 +1269,20 @@ namespace MonoDevelop.Ide.TypeSystem
 		}
 		#endregion
 
-		internal Document GetDocument (DocumentId documentId, CancellationToken cancellationToken = default(CancellationToken))
+		internal Document GetDocument (DocumentId documentId, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var project = CurrentSolution.GetProject (documentId.ProjectId);
 			if (project == null)
 				return null;
 			return project.GetDocument (documentId);
+		}
+
+		internal TextDocument GetAdditionalDocument (DocumentId documentId, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var project = CurrentSolution.GetProject (documentId.ProjectId);
+			if (project == null)
+				return null;
+			return project.GetAdditionalDocument (documentId);
 		}
 
 		internal async void UpdateFileContent (string fileName, string text)
@@ -1074,7 +1292,11 @@ namespace MonoDevelop.Ide.TypeSystem
 				var projectId = kv.Key;
 				var docId = this.GetDocumentId (projectId, fileName);
 				if (docId != null) {
-					base.OnDocumentTextChanged (docId, newText, PreservationMode.PreserveIdentity);
+					try { 
+						base.OnDocumentTextChanged (docId, newText, PreservationMode.PreserveIdentity);
+					} catch (Exception e) {
+						LoggingService.LogWarning ("Roslyn error on text change", e);
+					}
 				}
 				var monoProject = GetMonoProject (projectId);
 				if (monoProject != null) {
@@ -1085,7 +1307,6 @@ namespace MonoDevelop.Ide.TypeSystem
 							await TypeSystemService.ParseProjection (new ParseOptions { Project = monoProject, FileName = fileName, Content = new StringTextSource(text), BuildAction = pf.BuildAction }, mimeType).ConfigureAwait (false);
 					}
 				}
-
 			}
 		}
 
@@ -1110,108 +1331,114 @@ namespace MonoDevelop.Ide.TypeSystem
 
 		void OnFileAdded (object sender, MonoDevelop.Projects.ProjectFileEventArgs args)
 		{
-			if (internalChanges)
-				return;
-			var project = (MonoDevelop.Projects.Project)sender;
-			foreach (MonoDevelop.Projects.ProjectFileEventInfo fargs in args) {
-				var projectFile = fargs.ProjectFile;
-				if (projectFile.Subtype == MonoDevelop.Projects.Subtype.Directory)
-					continue;
-				var projectData = GetProjectData (GetProjectId (project));
-				SourceCodeKind sck;
-				if (TypeSystemParserNode.IsCompileableFile (projectFile, out sck)) {
-					if (projectData.GetDocumentId (projectFile.FilePath) != null) // may already been added by a rename event.
-						return;
-					var newDocument = CreateDocumentInfo (solutionData, project.Name, projectData, projectFile, sck);
-					OnDocumentAdded (newDocument);
-				} else {
-					foreach (var projectedDocument in GenerateProjections (projectFile, projectData, project)) {
-						OnDocumentAdded (projectedDocument);
+			try {
+				var project = (MonoDevelop.Projects.Project)sender;
+				foreach (MonoDevelop.Projects.ProjectFileEventInfo fargs in args) {
+					var projectFile = fargs.ProjectFile;
+					if (projectFile.Subtype == MonoDevelop.Projects.Subtype.Directory)
+						continue;
+					var projectData = GetProjectData (GetProjectId (project));
+					SourceCodeKind sck;
+					if (TypeSystemParserNode.IsCompileableFile (projectFile, out sck) || CanGenerateAnalysisContextForNonCompileable (project, projectFile)) {
+						if (projectData.GetDocumentId (projectFile.FilePath) != null) // may already been added by a rename event.
+							return;
+						var newDocument = CreateDocumentInfo (solutionData, project.Name, projectData, projectFile, sck);
+						OnDocumentAdded (newDocument);
+					} else {
+						foreach (var projectedDocument in GenerateProjections (projectFile, projectData, project, null)) {
+							OnDocumentAdded (projectedDocument);
+						}
 					}
-				}
 
+				}
+			} catch (Exception ex) {
+				LoggingService.LogInternalError (ex);
 			}
 		}
 
 		void OnFileRemoved (object sender, MonoDevelop.Projects.ProjectFileEventArgs args)
 		{
-			if (internalChanges)
-				return;
-			var project = (MonoDevelop.Projects.Project)sender;
-			foreach (MonoDevelop.Projects.ProjectFileEventInfo fargs in args) {
-				var projectId = GetProjectId (project);
-				var data = GetProjectData (projectId);
-				var id = data.GetDocumentId (fargs.ProjectFile.FilePath);
-				if (id != null) {
-					ClearDocumentData (id);
-					OnDocumentRemoved (id);
-					data.RemoveDocument (fargs.ProjectFile.FilePath);
-				} else {
-					foreach (var entry in ProjectionList) {
-						if (entry.File == fargs.ProjectFile) {
-							foreach (var projectedDocument in entry.Projections) {
-								id = data.GetDocumentId (projectedDocument.Document.FileName);
-								if (id != null) {
-									ClearDocumentData (id);
-									try {
-										OnDocumentRemoved (id);
-									} catch {
-										// already removed as document
+			try {
+				var project = (MonoDevelop.Projects.Project)sender;
+				foreach (MonoDevelop.Projects.ProjectFileEventInfo fargs in args) {
+					var projectId = GetProjectId (project);
+					var data = GetProjectData (projectId);
+					var id = data.GetDocumentId (fargs.ProjectFile.FilePath);
+					if (id != null) {
+						ClearDocumentData (id);
+						OnDocumentRemoved (id);
+						data.RemoveDocument (fargs.ProjectFile.FilePath);
+					} else {
+						foreach (var entry in ProjectionList) {
+							if (entry.File == fargs.ProjectFile) {
+								foreach (var projectedDocument in entry.Projections) {
+									id = data.GetDocumentId (projectedDocument.Document.FileName);
+									if (id != null) {
+										ClearDocumentData (id);
+										try {
+											OnDocumentRemoved (id);
+										} catch {
+											// already removed as document
+										}
+										data.RemoveDocument (projectedDocument.Document.FileName);
 									}
-									data.RemoveDocument (projectedDocument.Document.FileName);
+									break;
 								}
 							}
-							break;
 						}
 					}
 				}
+			} catch (Exception ex) {
+				LoggingService.LogInternalError (ex);
 			}
 		}
 
 		void OnFileRenamed (object sender, MonoDevelop.Projects.ProjectFileRenamedEventArgs args)
 		{
-			if (internalChanges)
-				return;
-			var project = (MonoDevelop.Projects.Project)sender;
-			foreach (MonoDevelop.Projects.ProjectFileRenamedEventInfo fargs in args) {
-				var projectFile = fargs.ProjectFile;
-				if (projectFile.Subtype == MonoDevelop.Projects.Subtype.Directory)
-					continue;
-				var projectId = GetProjectId (project);
-				var data = GetProjectData (projectId);
-				SourceCodeKind sck;
-				if (TypeSystemParserNode.IsCompileableFile (projectFile, out sck)) {
-					var id = data.GetDocumentId (fargs.OldName);
-					if (id != null) {
-						if (this.IsDocumentOpen (id)) {
-							this.InformDocumentClose (id, fargs.OldName);
-						}
-						OnDocumentRemoved (id);
-						data.RemoveDocument (fargs.OldName);
-					}
-					var newDocument = CreateDocumentInfo (solutionData, project.Name, GetProjectData (projectId), projectFile, sck);
-					OnDocumentAdded (newDocument);
-				} else {
-					foreach (var entry in ProjectionList) {
-						if (entry.File == projectFile) {
-							foreach (var projectedDocument in entry.Projections) {
-								var id = data.GetDocumentId (projectedDocument.Document.FileName);
-								if (id != null) {
-									if (this.IsDocumentOpen (id)) {
-										this.InformDocumentClose (id, projectedDocument.Document.FileName);
-									}
-									OnDocumentRemoved (id);
-									data.RemoveDocument (projectedDocument.Document.FileName);
-								}
+			try {
+				var project = (MonoDevelop.Projects.Project)sender;
+				foreach (MonoDevelop.Projects.ProjectFileRenamedEventInfo fargs in args) {
+					var projectFile = fargs.ProjectFile;
+					if (projectFile.Subtype == MonoDevelop.Projects.Subtype.Directory)
+						continue;
+					var projectId = GetProjectId (project);
+					var data = GetProjectData (projectId);
+					SourceCodeKind sck;
+					if (TypeSystemParserNode.IsCompileableFile (projectFile, out sck) || CanGenerateAnalysisContextForNonCompileable (project, projectFile)) {
+						var id = data.GetDocumentId (fargs.OldName);
+						if (id != null) {
+							if (this.IsDocumentOpen (id)) {
+								this.InformDocumentClose (id, fargs.OldName);
 							}
-							break;
+							OnDocumentRemoved (id);
+							data.RemoveDocument (fargs.OldName);
 						}
-					}
+						var newDocument = CreateDocumentInfo (solutionData, project.Name, GetProjectData (projectId), projectFile, sck);
+						OnDocumentAdded (newDocument);
+					} else {
+						foreach (var entry in ProjectionList) {
+							if (entry.File == projectFile) {
+								foreach (var projectedDocument in entry.Projections) {
+									var id = data.GetDocumentId (projectedDocument.Document.FileName);
+									if (id != null) {
+										if (this.IsDocumentOpen (id)) {
+											this.InformDocumentClose (id, projectedDocument.Document.FileName);
+										}
+										OnDocumentRemoved (id);
+										data.RemoveDocument (projectedDocument.Document.FileName);
+									}
+								}
+								break;
+							}
+						}
 
-					foreach (var projectedDocument in GenerateProjections (fargs.ProjectFile, data, project)) {
-						OnDocumentAdded (projectedDocument);
+						foreach (var projectedDocument in GenerateProjections (fargs.ProjectFile, data, project, null)) {
+							OnDocumentAdded (projectedDocument);
+						}
 					}
 				}
+			} catch (Exception ex) {
+				LoggingService.LogInternalError (ex);
 			}
 		}
 
@@ -1219,19 +1446,21 @@ namespace MonoDevelop.Ide.TypeSystem
 
 		async void OnProjectModified (object sender, MonoDevelop.Projects.SolutionItemModifiedEventArgs args)
 		{
-			if (internalChanges)
-				return;
-			if (!args.Any (x => x.Hint == "TargetFramework" || x.Hint == "References"))
-				return;
-			var project = sender as MonoDevelop.Projects.DotNetProject;
-			if (project == null)
-				return;
-			var projectId = GetProjectId (project);
-			if (CurrentSolution.ContainsProject (projectId)) {
-				OnProjectReloaded (await LoadProject (project, default(CancellationToken)).ConfigureAwait (false));
-				ProjectReloaded?.Invoke (this, new RoslynProjectEventArgs (projectId));
-			} else {
-				modifiedProjects.Add (project);
+			try {
+				if (!args.Any (x => x.Hint == "TargetFramework" || x.Hint == "References"))
+					return;
+				var project = sender as MonoDevelop.Projects.DotNetProject;
+				if (project == null)
+					return;
+				var projectId = GetProjectId (project);
+				if (CurrentSolution.ContainsProject (projectId)) {
+					OnProjectReloaded (await LoadProject (project, default(CancellationToken)).ConfigureAwait (false));
+					ProjectReloaded?.Invoke (this, new RoslynProjectEventArgs (projectId));
+				} else {
+					modifiedProjects.Add (project);
+				}
+			} catch (Exception ex) {
+				LoggingService.LogInternalError (ex);
 			}
 		}
 

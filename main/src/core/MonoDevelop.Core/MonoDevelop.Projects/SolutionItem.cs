@@ -58,12 +58,12 @@ namespace MonoDevelop.Projects
 
 		int loading;
 		ItemCollection<SolutionItem> dependencies = new ItemCollection<SolutionItem> ();
-		SolutionItemEventArgs thisItemArgs;
 		FileStatusTracker<SolutionItemEventArgs> fileStatusTracker;
 		FilePath fileName;
 		string name;
 		SolutionItemExtension itemExtension;
 		MSBuildFileFormat fileFormat;
+		internal string defaultItemId;
 		
 		SolutionItemConfiguration activeConfiguration;
 		SolutionItemConfigurationCollection configurations;
@@ -82,7 +82,6 @@ namespace MonoDevelop.Projects
 			TypeGuid = MSBuildProjectService.GetTypeGuidForItem (this);
 
 			fileFormat = MSBuildFileFormat.DefaultFormat;
-			thisItemArgs = new SolutionItemEventArgs (this);
 			configurations = new SolutionItemConfigurationCollection (this);
 			configurations.ConfigurationAdded += OnConfigurationAddedToCollection;
 			configurations.ConfigurationRemoved += OnConfigurationRemovedFromCollection;
@@ -376,6 +375,24 @@ namespace MonoDevelop.Projects
 			return ItemExtension.OnGetReferencedItems (configuration);
 		}
 
+		public IEnumerable<T>  GetReferencedExtensionsFromFlavor<T> (string projectTypeName, ConfigurationSelector configuration) where T : ProjectExtension
+		{
+			var extensions = new List<T> ();
+			var projects = ParentSolution.GetAllProjects ();
+			var extensionFlavor = Type.GetType (projectTypeName, true);
+
+			foreach (var p in projects) {
+				if (p == this
+					|| !p.GetReferencedItems (configuration).Contains (this))
+					continue;
+
+				T extension = p.GetService (extensionFlavor) as T;
+				if (extension != null)
+					extensions.Add (extension);
+			}
+			return extensions;
+		}
+
 		protected virtual IEnumerable<SolutionItem> OnGetReferencedItems (ConfigurationSelector configuration)
 		{
 			return dependencies;
@@ -405,11 +422,12 @@ namespace MonoDevelop.Projects
 			return file.IsNullOrEmpty ? FilePath.Empty : file.ParentDirectory; 
 		}
 
-		internal Task LoadAsync (ProgressMonitor monitor, FilePath fileName, MSBuildFileFormat format)
+		internal Task LoadAsync (ProgressMonitor monitor, FilePath fileName, MSBuildFileFormat format, string itemGuid)
 		{
 			fileFormat = format;
 			FileName = fileName;
 			Name = Path.GetFileNameWithoutExtension (fileName);
+			defaultItemId = itemGuid;
 			return ItemExtension.OnLoad (monitor);
 		}
 
@@ -443,7 +461,7 @@ namespace MonoDevelop.Projects
 			try {
 				fileStatusTracker.BeginSave ();
 				await OnSave (monitor);
-				OnSaved (thisItemArgs);
+				OnSaved (new SolutionItemSavedEventArgs (this, ParentSolution, SavingSolution));
 			} finally {
 				fileStatusTracker.EndSave ();
 			}
@@ -1214,7 +1232,7 @@ namespace MonoDevelop.Projects
 			base.OnNameChanged (e);
 		}
 		
-		protected virtual void OnSaved (SolutionItemEventArgs args)
+		protected virtual void OnSaved (SolutionItemSavedEventArgs args)
 		{
 			if (Saved != null)
 				Saved (this, args);
@@ -1474,7 +1492,7 @@ namespace MonoDevelop.Projects
 			// Do nothing by default
 		}
 
-		public event SolutionItemEventHandler Saved;
+		public event SolutionItemSavedEventHandler Saved;
 
 		/// <summary>
 		/// Occurs when the object is being disposed
@@ -1667,14 +1685,14 @@ namespace MonoDevelop.Projects
 	{
 		public override IEnumerable<StringTagDescription> GetTags ()
 		{
-			yield return new StringTagDescription ("ProjectName", "Project Name");
-			yield return new StringTagDescription ("ProjectDir", "Project Directory");
-			yield return new StringTagDescription ("AuthorName", "Project Author Name");
-			yield return new StringTagDescription ("AuthorEmail", "Project Author Email");
-			yield return new StringTagDescription ("AuthorCopyright", "Project Author Copyright");
-			yield return new StringTagDescription ("AuthorCompany", "Project Author Company");
-			yield return new StringTagDescription ("AuthorTrademark", "Project Trademark");
-			yield return new StringTagDescription ("ProjectFile", "Project File");
+			yield return new StringTagDescription ("ProjectName", GettextCatalog.GetString ("Project Name"));
+			yield return new StringTagDescription ("ProjectDir", GettextCatalog.GetString ("Project Directory"));
+			yield return new StringTagDescription ("AuthorName", GettextCatalog.GetString ("Project Author Name"));
+			yield return new StringTagDescription ("AuthorEmail", GettextCatalog.GetString ("Project Author Email"));
+			yield return new StringTagDescription ("AuthorCopyright", GettextCatalog.GetString ("Project Author Copyright"));
+			yield return new StringTagDescription ("AuthorCompany", GettextCatalog.GetString ("Project Author Company"));
+			yield return new StringTagDescription ("AuthorTrademark", GettextCatalog.GetString ("Project Trademark"));
+			yield return new StringTagDescription ("ProjectFile", GettextCatalog.GetString ("Project File"));
 		}
 
 		public override object GetTagValue (SolutionItem item, string tag)

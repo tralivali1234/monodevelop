@@ -114,17 +114,16 @@ namespace MonoDevelop.Ide.FindInFiles
 			}
 		}
 
-		async Task<Document> SearchDocument ()
+		Task<Document> SearchDocument ()
 		{
 			string fullPath = Path.GetFullPath (FileName);
-			return await Runtime.RunInMainThread (() => IdeApp.Workbench.Documents.FirstOrDefault (d => !string.IsNullOrEmpty (d.FileName) && Path.GetFullPath (d.FileName) == fullPath));
+			return Runtime.RunInMainThread (() => IdeApp.Workbench.Documents.FirstOrDefault (d => !string.IsNullOrEmpty (d.FileName) && Path.GetFullPath (d.FileName) == fullPath));
 		}
 
 		Document document;
 		StringBuilder buffer = null;
 		bool somethingReplaced;
 		IDisposable undoGroup;
-		bool hadBom;
 		Encoding encoding;
 
 		public async void BeginReplace (string content)
@@ -167,7 +166,7 @@ namespace MonoDevelop.Ide.FindInFiles
 			}
 			if (buffer != null && somethingReplaced) {
 				object attributes = DesktopService.GetFileAttributes (FileName);
-				TextFileUtility.WriteText (FileName, buffer.ToString (), encoding ?? Encoding.UTF8, hadBom);
+				TextFileUtility.WriteText (FileName, buffer.ToString (), encoding ?? Encoding.UTF8);
 				DesktopService.SetFileAttributes (FileName, attributes);
 			}
 			FileService.NotifyFileChanged (FileName);

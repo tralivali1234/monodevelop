@@ -1,4 +1,4 @@
-//
+﻿//
 // Document.cs
 //
 // Author:
@@ -56,6 +56,11 @@ using MonoDevelop.Ide.Editor.Highlighting;
 using MonoDevelop.Core.Text;
 using MonoDevelop.Components.Extensions;
 using MonoDevelop.Projects.SharedAssetsProjects;
+using MonoDevelop.Ide.Editor.Extension;
+using System.Collections.Immutable;
+using MonoDevelop.Ide.Editor.TextMate;
+using MonoDevelop.Core.Assemblies;
+using Roslyn.Utilities;
 
 namespace MonoDevelop.Ide.Gui
 {
@@ -87,7 +92,8 @@ namespace MonoDevelop.Ide.Gui
 			get {
 				if (analysisDocument == null)
 					return null;
-				return TypeSystemService.GetCodeAnalysisDocument (analysisDocument);
+				
+				return RoslynWorkspace.CurrentSolution.GetDocument (analysisDocument);
 			}
 		}
  		
@@ -164,19 +170,20 @@ namespace MonoDevelop.Ide.Gui
 				window.ViewContent.Project.Modified += HandleProjectModified;
 			window.ViewsChanged += HandleViewsChanged;
 			window.ViewContent.ContentNameChanged += delegate {
-				UnsubscibeAnalysisdocument ();
+				UnsubscribeAnalysisDocument ();
+				UnloadAdhocProject();
 			};
 			MonoDevelopWorkspace.LoadingFinished += TypeSystemService_WorkspaceItemLoaded;
 		}
 
 		void TypeSystemService_WorkspaceItemLoaded (object sender, EventArgs e)
 		{
-			UnsubscibeAnalysisdocument ();
+			UnsubscribeAnalysisDocument ();
+			UnloadAdhocProject ();
 			EnsureAnalysisDocumentIsOpen ().ContinueWith (delegate {
 				if (analysisDocument != null)
 					StartReparseThread ();
 			});
-
 		}
 
 /*		void UpdateRegisteredDom (object sender, ProjectDomEventArgs e)
@@ -215,7 +222,7 @@ namespace MonoDevelop.Ide.Gui
 		Solution adhocSolution;
 
 		public override Project Project {
-			get { return (Window != null ? Window.ViewContent.Project : null); }
+			get { return (Window != null ? Window.ViewContent.Project : null) ?? adhocProject; }
 /*			set { 
 				Window.ViewContent.Project = value; 
 				if (value != null)
@@ -345,9 +352,23 @@ namespace MonoDevelop.Ide.Gui
 			get { return Window.ViewContent.IsViewOnly; }
 		}
 
+		public override bool IsUntitled {
+			get {
+				return Window.ViewContent.IsUntitled;
+			}
+		}
+
+		Task currentOperationTask = Task.FromResult (true);
+
+		Task RunAsyncOperation (Func<Task> action)
+		{
+			Runtime.AssertMainThread ();
+			return currentOperationTask = currentOperationTask.ContinueWith (t => action(), Runtime.MainTaskScheduler).Unwrap ();
+		}
+
 		public Task Reload ()
 		{
-			return ReloadTask ();
+			return RunAsyncOperation (ReloadTask);
 		}
 
 		async Task ReloadTask ()
@@ -366,7 +387,7 @@ namespace MonoDevelop.Ide.Gui
 
 		public Task Save ()
 		{
-			return SaveTask ();
+			return RunAsyncOperation (SaveTask);
 		}
 
 		async Task SaveTask ()
@@ -377,16 +398,13 @@ namespace MonoDevelop.Ide.Gui
 				// Freeze the file change events. There can be several such events, and sending them all together
 				// is more efficient
 				FileService.FreezeEvents ();
-
 				if (Window.ViewContent.IsViewOnly || !Window.ViewContent.IsDirty)
 					return;
-	
 				if (!Window.ViewContent.IsFile) {
 					await Window.ViewContent.Save ();
 					return;
 				}
-				
-				if (Window.ViewContent.ContentName == null) {
+				if (IsUntitled) {
 					await SaveAs ();
 				} else {
 					try {
@@ -432,20 +450,20 @@ namespace MonoDevelop.Ide.Gui
 			}
 		}
 
-		public Task SaveAs ()
+		public Task<bool> SaveAs ()
 		{
 			return SaveAs (null);
 		}
 
-		public Task SaveAs (string filename)
+		public Task<bool> SaveAs (string filename)
 		{
-			return SaveAsTask (filename);
+			return Runtime.RunInMainThread (() => SaveAsTask (filename));
 		}
 
-		async Task SaveAsTask (string filename)
+		async Task<bool> SaveAsTask (string filename)
 		{
 			if (Window.ViewContent.IsViewOnly || !Window.ViewContent.IsFile)
-				return;
+				return false;
 
 			Encoding encoding = null;
 			
@@ -468,9 +486,9 @@ namespace MonoDevelop.Ide.Gui
 					dlg.CurrentFolder = Path.GetDirectoryName ((string)Window.ViewContent.ContentName);
 					dlg.InitialFileName = Path.GetFileName ((string)Window.ViewContent.ContentName);
 				}
-				
+
 				if (!dlg.Run ())
-					return;
+					return false;
 				
 				filename = dlg.SelectedFile;
 				encoding = dlg.Encoding;
@@ -478,33 +496,37 @@ namespace MonoDevelop.Ide.Gui
 		
 			if (!FileService.IsValidPath (filename)) {
 				MessageService.ShowMessage (GettextCatalog.GetString ("File name {0} is invalid", filename));
-				return;
+				return false;
 			}
 			// detect preexisting file
 			if (File.Exists (filename)) {
 				if (!MessageService.Confirm (GettextCatalog.GetString ("File {0} already exists. Overwrite?", filename), AlertButton.OverwriteFile))
-					return;
+					return false;
 			}
 			
 			// save backup first
 			if (IdeApp.Preferences.CreateFileBackupCopies) {
 				if (tbuffer != null && encoding != null)
-					TextFileUtility.WriteText (filename + "~", tbuffer.Text, encoding, tbuffer.UseBOM);
+					TextFileUtility.WriteText (filename + "~", tbuffer.Text, encoding);
 				else
 					await Window.ViewContent.Save (new FileSaveInformation (filename + "~", encoding));
 			}
 			TypeSystemService.RemoveSkippedfile (FileName);
 			// do actual save
+			Window.ViewContent.ContentName = filename;
+			Window.ViewContent.Project = Workbench.GetProjectContainingFile (filename);
 			await Window.ViewContent.Save (new FileSaveInformation (filename, encoding));
 			DesktopService.RecentFiles.AddFile (filename, (Project)null);
 			
 			OnSaved (EventArgs.Empty);
+
 			await UpdateParseDocument ();
+			return true;
 		}
 		
-		public bool Close ()
+		public async Task<bool> Close ()
 		{
-			return ((SdiWorkspaceWindow)Window).CloseWindow (false, true);
+			return await ((SdiWorkspaceWindow)Window).CloseWindow (false, true);
 		}
 
 		protected override void OnSaved (EventArgs e)
@@ -558,7 +580,7 @@ namespace MonoDevelop.Ide.Gui
 
 		internal void DisposeDocument ()
 		{
-			UnsubscibeAnalysisdocument ();
+			UnsubscribeAnalysisDocument ();
 			UnsubscribeRoslynWorkspace ();
 			UnloadAdhocProject ();
 			if (window is SdiWorkspaceWindow)
@@ -581,7 +603,7 @@ namespace MonoDevelop.Ide.Gui
 			viewsRO = null;
 		}
 
-		void UnsubscibeAnalysisdocument ()
+		void UnsubscribeAnalysisDocument ()
 		{
 			if (analysisDocument != null) {
 				TypeSystemService.InformDocumentClose (analysisDocument, FileName);
@@ -713,11 +735,11 @@ namespace MonoDevelop.Ide.Gui
 
 		internal void SetProject (Project project)
 		{
-			if (Window == null || Window.ViewContent == null || Window.ViewContent.Project == project)
+			if (Window == null || Window.ViewContent == null || Window.ViewContent.Project == project || project == adhocProject)
 				return;
 			UnloadAdhocProject ();
 			if (adhocProject == null)
-				UnsubscibeAnalysisdocument ();
+				UnsubscribeAnalysisDocument ();
 			// Unsubscribe project events
 			if (Window.ViewContent.Project != null)
 				Window.ViewContent.Project.Modified -= HandleProjectModified;
@@ -814,29 +836,35 @@ namespace MonoDevelop.Ide.Gui
 					doc = null;
 				}
 				if (doc != null)
-					return SpecializedTasks.EmptyTask;
+					return Task.CompletedTask;
 			}
 			if (Editor == null) {
-				UnsubscibeAnalysisdocument ();
-				return SpecializedTasks.EmptyTask;
+				UnsubscribeAnalysisDocument ();
+				return Task.CompletedTask;
 			}
-			if (Project != null && Editor.MimeType == "text/x-csharp" && !IsUnreferencedSharedProject(Project)) {
+			if (Project != null && !IsUnreferencedSharedProject(Project)) {
 				UnsubscribeRoslynWorkspace ();
 				RoslynWorkspace = TypeSystemService.GetWorkspace (this.Project.ParentSolution);
+				if (RoslynWorkspace == null) // Solution not loaded yet
+					return Task.CompletedTask;
 				SubscribeRoslynWorkspace ();
-				analysisDocument = TypeSystemService.GetDocumentId (this.Project, this.FileName);
+				analysisDocument = FileName != null ? TypeSystemService.GetDocumentId (this.Project, this.FileName) : null;
 				if (analysisDocument != null) {
 					TypeSystemService.InformDocumentOpen (analysisDocument, Editor);
+					return Task.CompletedTask;
 				}
-			} else {
-				CancelEnsureAnalysisDocumentIsOpen ();
-				lock (adhocProjectLock) {
-					var token = analysisDocumentSrc.Token;
-					if (adhocProject != null) {
-						return SpecializedTasks.EmptyTask;
-					}
-					if (Editor != null && Editor.MimeType == "text/x-csharp") {
+			}
+			lock (adhocProjectLock) {
+				var token = analysisDocumentSrc.Token;
+				if (adhocProject != null) {
+					return Task.CompletedTask;
+				}
+
+				if (Editor != null) {
+					var node = TypeSystemService.GetTypeSystemParserNode (Editor.MimeType, BuildAction.Compile);
+					if (Editor.MimeType == "text/x-csharp" || node?.Parser.CanGenerateAnalysisDocument (Editor.MimeType, BuildAction.Compile, new string[0]) == true) {
 						var newProject = Services.ProjectService.CreateDotNetProject ("C#");
+
 						this.adhocProject = newProject;
 
 						newProject.Name = "InvisibleProject";
@@ -856,19 +884,21 @@ namespace MonoDevelop.Ide.Gui
 						adhocSolution = new Solution ();
 						adhocSolution.AddConfiguration ("", true);
 						adhocSolution.DefaultSolutionFolder.AddItem (newProject);
+						MonoDevelopWorkspace.LoadingFinished -= TypeSystemService_WorkspaceItemLoaded;
 						return TypeSystemService.Load (adhocSolution, new ProgressMonitor (), token).ContinueWith (task => {
+							MonoDevelopWorkspace.LoadingFinished += TypeSystemService_WorkspaceItemLoaded;
 							if (token.IsCancellationRequested)
 								return;
 							UnsubscribeRoslynWorkspace ();
-							RoslynWorkspace = task.Result.FirstOrDefault(); // 1 solution loaded ->1 workspace as result
+							RoslynWorkspace = task.Result.FirstOrDefault (); // 1 solution loaded ->1 workspace as result
 							SubscribeRoslynWorkspace ();
-							analysisDocument = TypeSystemService.GetDocumentId (RoslynWorkspace, newProject, adHocFile);
+							analysisDocument = RoslynWorkspace.CurrentSolution.Projects.First ().DocumentIds.First ();
 							TypeSystemService.InformDocumentOpen (RoslynWorkspace, analysisDocument, Editor);
 						});
 					}
 				}
 			}
-			return SpecializedTasks.EmptyTask;
+			return Task.CompletedTask;
 		}
 
 		void UnsubscribeRoslynWorkspace ()
@@ -1039,20 +1069,16 @@ namespace MonoDevelop.Ide.Gui
 					return null;
 			}
 		}
-		
+
 		public static string[] GetCommentTags (string fileName)
 		{
 			//Document doc = IdeApp.Workbench.ActiveDocument;
-			string loadedMimeType = DesktopService.GetMimeTypeForUri (fileName);
+			var lang = TextMateLanguage.Create (SyntaxHighlightingService.GetScopeForFileName (fileName));
+			if (lang.LineComments.Count > 0)
+				return lang.LineComments.ToArray ();
 
-			var result = TextEditorFactory.GetSyntaxProperties (loadedMimeType, "LineComment");
-			if (result != null)
-				return result;
-
-			var start = TextEditorFactory.GetSyntaxProperties (loadedMimeType, "BlockCommentStart");
-			var end = TextEditorFactory.GetSyntaxProperties (loadedMimeType, "BlockCommentEnd");
-			if (start != null && end != null)
-				return new [] { start[0], end[0] };
+			if (lang.BlockComments.Count> 0)
+				return new [] { lang.BlockComments[0].Item1, lang.BlockComments[0].Item2 };
 			return null;
 		}
 

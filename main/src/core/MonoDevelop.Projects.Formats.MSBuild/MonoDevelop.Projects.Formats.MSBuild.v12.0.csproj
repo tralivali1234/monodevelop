@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <Import Project="..\..\..\MonoDevelop.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">x86</Platform>
@@ -9,7 +10,7 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>MonoDevelop.Projects.Formats.MSBuild</AssemblyName>
     <RootNamespace>MonoDevelop.Projects.Formats.MSBuild</RootNamespace>
-    <BaseIntermediateOutputPath>obj\12.0</BaseIntermediateOutputPath>
+    <BaseIntermediateOutputPath>obj\12.0\</BaseIntermediateOutputPath>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
     <DebugSymbols>True</DebugSymbols>
@@ -42,22 +43,14 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Main.cs" />
     <Compile Include="AssemblyInfo.cs" />
     <Compile Include="MonoDevelop.Projects.Formats.MSBuild\ProjectBuilder.cs" />
     <Compile Include="MonoDevelop.Projects.Formats.MSBuild\LocalLogger.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\ILogWriter.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\IProjectBuilder.cs" />
     <Compile Include="MonoDevelop.Projects.Formats.MSBuild\BuildEngine.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\IBuildEngine.cs" />
     <Compile Include="MonoDevelop.Projects.Formats.MSBuild\ConsoleLogger.cs" />
     <Compile Include="AssemblyInfo.v12.0.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\MSBuildTargetResult.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\MSBuildResult.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\MSBuildEvaluatedItem.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\ProjectBuilder.Shared.cs" />
-    <Compile Include="MonoDevelop.Projects.Formats.MSBuild\BuildEngine.Shared.cs" />
   </ItemGroup>
+  <Import Project="MonoDevelop.Projects.MSBuild.Shared\MonoDevelop.Projects.MSBuild.Shared.projitems" Label="Shared" Condition="Exists('MonoDevelop.Projects.MSBuild.Shared\MonoDevelop.Projects.MSBuild.Shared.projitems')" />
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
   <ItemGroup>
     <Folder Include="MonoDevelop.Projects.Formats.MSBuild\" />
@@ -68,4 +61,5 @@
       <Link>MonoDevelop.Projects.Formats.MSBuild.exe.config</Link>
     </None>
   </ItemGroup>
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>

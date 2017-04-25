@@ -46,6 +46,7 @@ using MonoDevelop.Components.AutoTest;
 using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Ide.Extensions;
 using MonoDevelop.Ide.Templates;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.Ide
 {
@@ -61,7 +62,8 @@ namespace MonoDevelop.Ide
 		static IdePreferences preferences;
 
 		public const int CurrentRevision = 5;
-		
+
+		static bool isMainRunning;
 		static bool isInitialRun;
 		static bool isInitialRunAfterUpgrade;
 		static int upgradedFromRevision;
@@ -383,17 +385,22 @@ namespace MonoDevelop.Ide
 		public static void Run ()
 		{
 			// finally run the workbench window ...
+			isMainRunning = true;
 			Gtk.Application.Run ();
 		}
-		
-		
+
+		public static bool IsRunning {
+			get { return isMainRunning; }
+		}
+
 		/// <summary>
 		/// Exits MonoDevelop. Returns false if the user cancels exiting.
 		/// </summary>
-		public static bool Exit ()
+		public static async Task<bool> Exit ()
 		{
-			if (workbench.Close ()) {
+			if (await workbench.Close ()) {
 				Gtk.Application.Quit ();
+				isMainRunning = false;
 				return true;
 			}
 			return false;
@@ -408,9 +415,9 @@ namespace MonoDevelop.Ide
 		/// Starts a new MonoDevelop instance in a new process and 
 		/// stops the current MonoDevelop instance.
 		/// </remarks>
-		public static bool Restart (bool reopenWorkspace = false)
+		public static async Task<bool> Restart (bool reopenWorkspace = false)
 		{
-			if (Exit ()) {
+			if (await Exit ()) {
 				try {
 					DesktopService.RestartIde (reopenWorkspace);
 				} catch (Exception ex) {
@@ -486,7 +493,9 @@ namespace MonoDevelop.Ide
 			if (IdeApp.Preferences.EnableInstrumentation) {
 				if (instrumentationStatusIcon == null) {
 					instrumentationStatusIcon = IdeApp.Workbench.StatusBar.ShowStatusIcon (ImageService.GetIcon (MonoDevelop.Ide.Gui.Stock.StatusInstrumentation));
-					instrumentationStatusIcon.ToolTip = "Instrumentation service enabled";
+					instrumentationStatusIcon.Title = GettextCatalog.GetString ("Instrumentation");
+					instrumentationStatusIcon.ToolTip = GettextCatalog.GetString ("Instrumentation service enabled");
+					instrumentationStatusIcon.Help = GettextCatalog.GetString ("Information about the Instrumentation Service");
 					instrumentationStatusIcon.Clicked += delegate {
 						InstrumentationService.StartMonitor ();
 					};

@@ -30,6 +30,7 @@ using NUnit.Framework;
 using UnitTests;
 using System.Linq;
 using MonoDevelop.Projects.Extensions;
+using MonoDevelop.Core.Execution;
 
 namespace MonoDevelop.Projects
 {
@@ -62,6 +63,8 @@ namespace MonoDevelop.Projects
 			string projFile = Util.GetSampleProject ("run-configurations", "ConsoleProject", "ConsoleProject.new-project.csproj");
 			string newProjectXml = File.ReadAllText (projFile);
 			Assert.AreEqual (Util.ToWindowsEndings (newProjectXml), projectXml);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -98,6 +101,8 @@ namespace MonoDevelop.Projects
 			projectXml = File.ReadAllText (p.FileName + ".user");
 			newProjectXml = File.ReadAllText (projFile + ".user");
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -124,6 +129,8 @@ namespace MonoDevelop.Projects
 			string projectXml = File.ReadAllText (p.FileName);
 			string newProjectXml = File.ReadAllText (p.FileName.ChangeName ("ConsoleProject.configs-added"));
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -141,6 +148,8 @@ namespace MonoDevelop.Projects
 			es = p.RunConfigurations [2];
 			Assert.AreEqual (es.Name, "Test2");
 			Assert.AreEqual (es.Properties.GetValue ("SomeValue"), "Bar");
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -160,6 +169,8 @@ namespace MonoDevelop.Projects
 			string projectXml = File.ReadAllText (p.FileName);
 			string newProjectXml = File.ReadAllText (p.FileName.ChangeName ("ConsoleProject.configs-modified"));
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -177,6 +188,8 @@ namespace MonoDevelop.Projects
 			string projectXml = File.ReadAllText (p.FileName);
 			string newProjectXml = File.ReadAllText (p.FileName.ChangeName ("ConsoleProject"));
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -208,6 +221,8 @@ namespace MonoDevelop.Projects
 			projectXml = File.ReadAllText (p.FileName + ".user");
 			newProjectXml = File.ReadAllText (p.FileName.ChangeName ("ConsoleProject.configs-user-added") + ".user");
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			sol.Dispose ();
 		}
 
 		[Test]
@@ -227,6 +242,8 @@ namespace MonoDevelop.Projects
 			Assert.IsTrue (es.StoreInUserFile);
 			Assert.AreEqual (es.Name, "Test2");
 			Assert.AreEqual (es.Properties.GetValue ("SomeValue"), "Bar");
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -254,6 +271,8 @@ namespace MonoDevelop.Projects
 			projectXml = File.ReadAllText (p.FileName + ".user");
 			newProjectXml = File.ReadAllText (p.FileName.ChangeName ("ConsoleProject.configs-user-switched") + ".user");
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -274,6 +293,8 @@ namespace MonoDevelop.Projects
 			Assert.AreEqual (newProjectXml, projectXml);
 
 			Assert.IsFalse (File.Exists (p.FileName + ".user"));
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -300,6 +321,8 @@ namespace MonoDevelop.Projects
 			projectXml = File.ReadAllText (p.FileName + ".user");
 			newProjectXml = File.ReadAllText (p.FileName.ChangeName ("ConsoleProject.default-modified") + ".user");
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -323,6 +346,8 @@ namespace MonoDevelop.Projects
 			Assert.AreEqual (newProjectXml, projectXml);
 
 			Assert.IsFalse (File.Exists (p.FileName + ".user"));
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -347,6 +372,8 @@ namespace MonoDevelop.Projects
 			newConf2.ExternalConsole = false;
 			p.RunConfigurations.Add (newConf2);
 			Assert.IsFalse (newConf2.ExternalConsole);
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -378,6 +405,8 @@ namespace MonoDevelop.Projects
 			projectXml = File.ReadAllText (p.FileName + ".user");
 			newProjectXml = File.ReadAllText (projUserFile);
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			p.Dispose ();
 		}
 
 		[Test]
@@ -415,6 +444,23 @@ namespace MonoDevelop.Projects
 			projectXml = File.ReadAllText (p.FileName + ".user");
 			newProjectXml = File.ReadAllText (projUserFile);
 			Assert.AreEqual (newProjectXml, projectXml);
+
+			p.Dispose ();
+		}
+
+		[Test]
+		public async Task EnvVarsInConfigurationAreParsed ()
+		{
+			string solFile = Util.GetSampleProject ("run-configurations", "ConsoleProject", "ConsoleProject.default-console.csproj");
+			DotNetProject p = (DotNetProject)await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), solFile);
+
+			var rc = (DotNetProjectRunConfiguration) p.RunConfigurations.FirstOrDefault ();
+			var conf = (DotNetProjectConfiguration) p.Configurations [0];
+			rc.EnvironmentVariables.Add ("abc","${TargetDir}");
+			var cmd = (DotNetExecutionCommand) p.CreateExecutionCommand (conf.Selector, conf, rc);
+			Assert.AreEqual (conf.OutputDirectory.ToString (), cmd.EnvironmentVariables["abc"]);
+
+			p.Dispose ();
 		}
 	}
 }

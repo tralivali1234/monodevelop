@@ -33,6 +33,7 @@ using System.Linq;
 using MonoDevelop.Components;
 using MonoDevelop.Ide.Editor;
 using MonoDevelop.Ide.Gui.Content;
+using Microsoft.CodeAnalysis.CSharp.Formatting;
 
 
 namespace MonoDevelop.CSharp.Formatting
@@ -155,9 +156,7 @@ namespace MonoDevelop.CSharp.Formatting
 			treeviewIndentOptions.SearchColumn = -1; // disable the interactive search
 			treeviewIndentOptions.HeadersVisible = false;
 			treeviewIndentOptions.Selection.Changed += TreeSelectionChanged;
-			treeviewIndentOptions.AppendColumn (column);
-			
-			column = new TreeViewColumn ();
+
 			var cellRendererCombo = new CellRendererCombo ();
 			cellRendererCombo.Ypad = 1;
 			cellRendererCombo.Mode = CellRendererMode.Editable;
@@ -253,9 +252,7 @@ namespace MonoDevelop.CSharp.Formatting
 			treeviewNewLines.SearchColumn = -1; // disable the interactive search
 			treeviewNewLines.HeadersVisible = false;
 			treeviewNewLines.Selection.Changed += TreeSelectionChanged;
-			treeviewNewLines.AppendColumn (column);
-			
-			column = new TreeViewColumn ();
+
 			cellRendererCombo = new CellRendererCombo ();
 			cellRendererCombo.Ypad = 1;
 			cellRendererCombo.Mode = CellRendererMode.Editable;
@@ -371,21 +368,20 @@ namespace MonoDevelop.CSharp.Formatting
 			AddOption (newLineOptions, category, "NewLineForMembersInObjectInit", GettextCatalog.GetString ("Place members in object initializers on new line"), @"void Example()
 {
 	new MyObject {
-		A = 1,
-		B = 2
+		A = 1, B = 2
 	};
 }");
 			AddOption (newLineOptions, category, "NewLineForMembersInAnonymousTypes", GettextCatalog.GetString ("Place members in anonymous types on new line"), @"void Example()
 {
 	var c = new
 	{
-		A = 1,
-		B = 2
+		A = 1, B = 2
 	};
 }");
 			AddOption (newLineOptions, category, "NewLineForClausesInQuery", GettextCatalog.GetString ("Place query expression clauses on new line"), @"void Example()
 {
-	from o in col select o.Foo;
+    var q = from a in e
+            from b in e select a * b;
 }");
 			treeviewNewLines.ExpandAll ();
 			#endregion
@@ -407,9 +403,7 @@ namespace MonoDevelop.CSharp.Formatting
 			treeviewSpacing.SearchColumn = -1; // disable the interactive search
 			treeviewSpacing.HeadersVisible = false;
 			treeviewSpacing.Selection.Changed += TreeSelectionChanged;
-			treeviewSpacing.AppendColumn (column);
 
-			column = new TreeViewColumn ();
 			cellRendererCombo = new CellRendererCombo ();
 			cellRendererCombo.Ypad = 1;
 			cellRendererCombo.Mode = CellRendererMode.Editable;
@@ -573,9 +567,7 @@ namespace MonoDevelop.CSharp.Formatting
 			treeviewStyle.SearchColumn = -1; // disable the interactive search
 			treeviewStyle.HeadersVisible = false;
 			treeviewStyle.Selection.Changed += TreeSelectionChanged;
-			treeviewStyle.AppendColumn (column);
 
-			column = new TreeViewColumn ();
 			cellRendererCombo = new CellRendererCombo ();
 			cellRendererCombo.Ypad = 1;
 			cellRendererCombo.Mode = CellRendererMode.Editable;
@@ -624,9 +616,7 @@ namespace MonoDevelop.CSharp.Formatting
 			treeviewWrapping.SearchColumn = -1; // disable the interactive search
 			treeviewWrapping.HeadersVisible = false;
 			treeviewWrapping.Selection.Changed += TreeSelectionChanged;
-			treeviewWrapping.AppendColumn (column);
 
-			column = new TreeViewColumn ();
 			cellRendererCombo = new CellRendererCombo ();
 			cellRendererCombo.Ypad = 1;
 			cellRendererCombo.Mode = CellRendererMode.Editable;
